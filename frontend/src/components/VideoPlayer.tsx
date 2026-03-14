@@ -65,6 +65,7 @@ function HQPornerPlayer({
 
       setFallbackUrl(fallback);
 
+      // Backend explicitly marks removed videos — show a clean deleted state
       if (data.deleted) {
         setState("deleted");
       } else {
