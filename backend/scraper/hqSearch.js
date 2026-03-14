@@ -47,7 +47,15 @@ function sleep(ms) {
 
 function toAbsolute(href) {
   if (!href) return "";
-  return href.startsWith("http") ? href : HQ_BASE + href;
+  let url = href.startsWith("http") ? href : HQ_BASE + href;
+
+  // Normalize: HQPorner video pages always end in .html
+  // Some hrefs on search pages are missing it — add it if absent
+  if (url.includes("/hdporn/") && !url.endsWith(".html")) {
+    url = url.replace(/\/?$/, ".html");
+  }
+
+  return url;
 }
 
 function resolveThumb(imgEl) {
@@ -195,6 +203,10 @@ async function scrapeHQSearch(query, page = 1) {
     });
   }
 
+  // Log first 3 URLs so we can verify the format is correct
+  if (videos.length > 0) {
+    console.log("[hqSearch] sample URLs:", videos.slice(0, 3).map(v => v.url));
+  }
   console.log(`[hqSearch] "${query}" page ${page} → ${videos.length} results`);
   return videos;
 }

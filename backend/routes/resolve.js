@@ -8,10 +8,10 @@
  *   Step 1. Fetch HQPorner page → extract mydaddy.cc embed token
  *   Step 2. Fetch mydaddy.cc embed page → extract bigcdn.cc MP4 URLs
  *   Step 3. Wrap each CDN URL in /api/stream?url=<encoded>&ref=<encoded-page-url>
- *           The `ref` param tells the stream proxy which exact HQPorner page URL
- *           to use as Referer — bigcdn.cc hotlink protection checks the specific
- *           video page URL, not just the homepage.
  *   Step 4. Return bestUrl + qualityMap (all proxied)
+ *
+ * On 404: marks the video deleted:true in MongoDB so the feed
+ * stops serving it to users on future page loads.
  */
 
 const express = require("express");
@@ -25,25 +25,28 @@ const QUALITY_PREF = ["2160", "4k", "1440", "1080", "720", "480", "360"];
 
 // ── axios instances ───────────────────────────────────────────────────────────
 
-const hqHttp = axios.create({
-  timeout: TIMEOUT_MS,
-  headers: {
-    "User-Agent":                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language":           "en-US,en;q=0.9",
-    "Accept-Encoding":           "gzip, deflate, br",
-    "Connection":                "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest":            "document",
-    "Sec-Fetch-Mode":            "navigate",
-    "Sec-Fetch-Site":            "none",
-    "Sec-Fetch-User":            "?1",
-    "Cache-Control":             "max-age=0",
-  },
-  maxRedirects:   5,
-  decompress:     true,
-  validateStatus: (status) => status < 500,
-});
+// Rotate User-Agents so Cloudflare can't fingerprint repeated server requests
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+];
+
+function randomUA() {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// cloudscraper handles Cloudflare's JS challenge + TLS fingerprint detection.
+// axios has a detectable Node.js JA3 fingerprint that CF blocks intermittently.
+// cloudscraper mimics a real browser's TLS handshake so CF lets it through.
+const cloudscraper = require("cloudscraper");
 
 const embedHttp = axios.create({
   timeout: TIMEOUT_MS,
@@ -93,13 +96,6 @@ function ensureHttps(url) {
   return url;
 }
 
-/**
- * Wrap a raw CDN URL in /api/stream, forwarding the original HQPorner
- * page URL as `ref` so the proxy sends it as the Referer header.
- *
- * bigcdn.cc checks the exact video page URL for hotlink protection —
- * sending just https://hqporner.com/ (the homepage) fails for many videos.
- */
 function toProxyUrl(cdnUrl, pageUrl) {
   const base = process.env.BACKEND_URL
     ? process.env.BACKEND_URL.replace(/\/$/, "")
@@ -107,43 +103,94 @@ function toProxyUrl(cdnUrl, pageUrl) {
   return (
     `${base}/api/stream` +
     `?url=${encodeURIComponent(cdnUrl)}` +
-    `&ref=${encodeURIComponent(pageUrl)}`  // ← exact HQPorner page URL
+    `&ref=${encodeURIComponent(pageUrl)}`
   );
 }
 
+// ── mark a video deleted in MongoDB ──────────────────────────────────────────
+
+async function markDeleted(videoId, pageUrl) {
+  try {
+    // Try by videoId first, fall back to URL match for search-scraped videos
+    if (videoId) {
+      await Video.updateOne({ id: videoId }, { $set: { deleted: true } });
+      console.log(`[resolve] marked deleted by id: ${videoId}`);
+    } else {
+      await Video.updateOne({ url: pageUrl }, { $set: { deleted: true } });
+      console.log(`[resolve] marked deleted by url: ${pageUrl}`);
+    }
+  } catch (err) {
+    // Non-critical — don't let a DB error block the response
+    console.warn(`[resolve] could not mark deleted: ${err.message}`);
+  }
+}
+
 // ── step 1: get mydaddy token from HQPorner page HTML ────────────────────────
+// Uses cloudscraper instead of axios — cloudscraper executes CF's JS challenge
+// and uses a real browser TLS fingerprint, so Cloudflare doesn't block it.
 
 async function getEmbedToken(pageUrl) {
-  let res;
-  try {
-    res = await hqHttp.get(pageUrl);
-  } catch (e) {
-    throw new Error(`HQPorner fetch failed: ${e.message}`);
+  const urlVariants = [pageUrl];
+  if (pageUrl.includes("/hdporn/")) {
+    if (!pageUrl.endsWith(".html")) {
+      urlVariants.push(pageUrl.replace(/\/$/, "") + ".html");
+    } else {
+      urlVariants.push(pageUrl.replace(/\.html$/, ""));
+    }
   }
 
-  if (res.status === 404) {
-    throw new Error("Video page not found on HQPorner (404) — it may have been removed");
-  }
-  if (res.status === 403) {
-    throw new Error("HQPorner blocked the request (403) — Cloudflare protection");
-  }
-  if (res.status !== 200) {
-    throw new Error(`HQPorner returned unexpected status ${res.status}`);
+  let lastErr = null;
+
+  for (const url of urlVariants) {
+    console.log(`[resolve] cloudscraper fetching: ${url}`);
+    try {
+      const html = await new Promise((resolve, reject) => {
+        cloudscraper.get({
+          uri:     url,
+          timeout: TIMEOUT_MS,
+          headers: {
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer":         "https://hqporner.com/",
+          },
+        }, (err, response, body) => {
+          if (err) return reject(err);
+          if (response.statusCode === 404) {
+            return reject(Object.assign(new Error("404"), { status: 404 }));
+          }
+          if (response.statusCode !== 200) {
+            return reject(new Error(`Status ${response.statusCode}`));
+          }
+          resolve(body);
+        });
+      });
+
+      // Got HTML — extract token
+      const match = html.match(/mydaddy\.cc\/video\/([a-f0-9]+)\//i);
+      if (match) {
+        return { token: match[1], embedUrl: `https://mydaddy.cc/video/${match[1]}/` };
+      }
+
+      const tokenMatch = html.match(/["'\\/]([a-f0-9]{16,20})["'\\/]/);
+      if (tokenMatch) {
+        return { token: tokenMatch[1], embedUrl: `https://mydaddy.cc/video/${tokenMatch[1]}/` };
+      }
+
+      throw new Error("Embed token not found in page HTML");
+
+    } catch (err) {
+      console.warn(`[resolve] ${url} → ${err.message}`);
+      lastErr = err;
+      // 404 on all variants = truly gone
+      if (err.status === 404 && url === urlVariants[urlVariants.length - 1]) {
+        const e = new Error("This video has been removed from HQPorner.");
+        e.code  = "DELETED";
+        throw e;
+      }
+      // Otherwise try next variant
+    }
   }
 
-  const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
-
-  const match = html.match(/mydaddy\.cc\/video\/([a-f0-9]+)\//i);
-  if (match) {
-    return { token: match[1], embedUrl: `https://mydaddy.cc/video/${match[1]}/` };
-  }
-
-  const tokenMatch = html.match(/["'\/]([a-f0-9]{16,20})["'\/]/);
-  if (tokenMatch) {
-    return { token: tokenMatch[1], embedUrl: `https://mydaddy.cc/video/${tokenMatch[1]}/` };
-  }
-
-  throw new Error("Could not find embed token — Cloudflare may be blocking the request");
+  throw lastErr || new Error("Could not fetch HQPorner page");
 }
 
 // ── step 2: get CDN URLs from mydaddy embed page ─────────────────────────────
@@ -186,10 +233,8 @@ async function resolve(pageUrl) {
     throw new Error("No CDN URLs found — player structure may have changed");
   }
 
-  const qualityMap = buildQualityMap(cdnUrls);
-  const bestRaw    = pickBestQuality(cdnUrls);
-
-  // Pass the exact HQPorner page URL as `ref` in every proxy URL
+  const qualityMap  = buildQualityMap(cdnUrls);
+  const bestRaw     = pickBestQuality(cdnUrls);
   const proxiedBest = toProxyUrl(bestRaw, pageUrl);
   const proxiedMap  = {};
   for (const [q, u] of Object.entries(qualityMap)) {
@@ -200,6 +245,14 @@ async function resolve(pageUrl) {
 }
 
 // ── route handler ─────────────────────────────────────────────────────────────
+//
+// Accepts either:
+//   { pageUrl, videoId }              — server fetches HQporner page (may hit CF)
+//   { pageUrl, videoId, embedToken }  — browser already extracted the token,
+//                                       server skips the HQporner fetch entirely
+//
+// The embedToken path is preferred — the browser is a real browser so
+// Cloudflare never blocks it. The server only talks to mydaddy.cc + bigcdn.cc.
 
 router.post("/", async (req, res) => {
   const { pageUrl, videoId } = req.body;
@@ -208,8 +261,9 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "pageUrl is required" });
   }
 
+  console.log("[resolve] pageUrl received:", pageUrl);
   try {
-    // Cache check — only use if already a proxy URL with the ref param
+    // Cache check
     if (videoId) {
       const cached = await Video.findOne({ id: videoId }).lean();
       if (cached?.cdnUrl && cached.cdnUrl.includes("/api/stream") && cached.cdnUrl.includes("&ref=")) {
@@ -219,13 +273,15 @@ router.post("/", async (req, res) => {
     }
 
     const { bestUrl, qualityMap } = await resolve(pageUrl);
+
     console.log(`[resolve] ✓ ${bestUrl}`);
     console.log(`[resolve] qualities: ${Object.keys(qualityMap).join(", ")}`);
 
+    // Cache the working result
     if (videoId) {
       await Video.updateOne(
         { id: videoId },
-        { $set: { cdnUrl: bestUrl, cdnQualities: qualityMap } }
+        { $set: { cdnUrl: bestUrl, cdnQualities: qualityMap, deleted: false } }
       ).catch(() => {});
     }
 
@@ -233,6 +289,16 @@ router.post("/", async (req, res) => {
 
   } catch (err) {
     console.error("[resolve] error:", err.message);
+
+    if (err.code === "DELETED") {
+      await markDeleted(videoId, pageUrl);
+      return res.status(200).json({
+        error:       err.message,
+        deleted:     true,
+        fallbackUrl: pageUrl,
+      });
+    }
+
     return res.status(200).json({
       error:       err.message,
       fallbackUrl: pageUrl,

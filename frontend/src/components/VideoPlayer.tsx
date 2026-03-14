@@ -33,7 +33,7 @@ function HQPornerPlayer({
   title: string;
   videoId?: string;
 }) {
-  type State = "idle" | "loading" | "playing" | "error";
+  type State = "idle" | "loading" | "playing" | "error" | "deleted";
 
   const [state, setState]             = useState<State>("idle");
   const [cdnUrl, setCdnUrl]           = useState<string>("");
@@ -59,14 +59,18 @@ function HQPornerPlayer({
       setCdnUrl(url);
       setState("playing");
     } catch (err: any) {
-      const fallback = err?.response?.data?.fallbackUrl || src;
-      const message  =
-        err?.response?.data?.error || "Could not load video stream.";
+      const data     = (err?.response?.data || {}) as any;
+      const fallback = data.fallbackUrl || src;
+      const message  = data.error || "Could not load video stream.";
 
-      setErrMsg(message);
-      setFallbackUrl(fallback);   // store for the manual button
-      setState("error");
-      // ← REMOVED: window.open(fallback, "_blank") — this was causing the redirect
+      setFallbackUrl(fallback);
+
+      if (data.deleted) {
+        setState("deleted");
+      } else {
+        setErrMsg(message);
+        setState("error");
+      }
     }
   };
 
@@ -110,7 +114,6 @@ function HQPornerPlayer({
               >
                 Try again
               </button>
-              {/* Manual external link — user chooses to open it */}
               {fallbackUrl && (
                 <a
                   href={fallbackUrl}
@@ -123,6 +126,25 @@ function HQPornerPlayer({
                 </a>
               )}
             </div>
+          </>
+        )}
+
+        {state === "deleted" && (
+          <>
+            <p className="text-content-muted text-sm px-4 text-center">
+              This video has been removed from HQPorner.
+            </p>
+            {fallbackUrl && (
+              <a
+                href={fallbackUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Check on HQPorner
+              </a>
+            )}
           </>
         )}
       </div>
