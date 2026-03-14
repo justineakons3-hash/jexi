@@ -9,17 +9,16 @@ import { Search, Loader2 } from "lucide-react";
 import { Creator } from "../types";
 import axios from "axios";
 
-// CreatorsView no longer receives a `creators` prop.
-// It fetches its own paginated data directly from the API, which means:
-//   - Infinite scroll works across all 5000+ creators
-//   - Search hits MongoDB directly — finds creators not yet visible on screen
 interface CreatorsViewProps {
   onSelectCreator: (id: string) => void;
+  // NEW: called with the creator's name when clicked — triggers a search
+  // in the main video feed the same way typing in the search bar does.
+  onSearchCreator: (name: string) => void;
 }
 
-const LIMIT = 100; // creators per page
+const LIMIT = 100;
 
-export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
+export default function CreatorsView({ onSelectCreator, onSearchCreator }: CreatorsViewProps) {
   const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
   const [creatorsList, setCreatorsList] = useState<Creator[]>([]);
@@ -28,7 +27,6 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
   const [hasMore, setHasMore]           = useState(true);
   const [total, setTotal]               = useState<number | null>(null);
 
-  // Refs — avoid stale closures in IntersectionObserver (same pattern as VideoFeed)
   const pageRef        = useRef(1);
   const loadingRef     = useRef(false);
   const hasMoreRef     = useRef(true);
@@ -36,11 +34,9 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
   const initialDoneRef = useRef(false);
   const observerTarget = useRef<HTMLDivElement>(null);
   const debounceRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Keep a ref of the current search so loadMore always uses the latest value
   const searchRef      = useRef("");
 
   /* ---------- BUILD URL ---------- */
-
   const buildUrl = useCallback(
     (page: number, q: string) => {
       const base = `${API_BASE}/creators?page=${page}&limit=${LIMIT}`;
@@ -50,7 +46,6 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
   );
 
   /* ---------- FETCH ONE PAGE ---------- */
-
   const fetchPage = useCallback(
     async (page: number, q: string, gen: number, replace: boolean) => {
       loadingRef.current = true;
@@ -61,7 +56,6 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
           headers: { "Cache-Control": "no-cache" },
         });
 
-        // Discard stale response if a newer search was triggered mid-flight
         if (gen !== fetchGenRef.current) return;
 
         const incoming: Creator[] = Array.isArray(res.data?.creators)
@@ -77,7 +71,6 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
         } else {
           setCreatorsList((prev) => (replace ? incoming : [...prev, ...incoming]));
           pageRef.current        = page + 1;
-          // If we got fewer than LIMIT, there are no more pages
           hasMoreRef.current     = incoming.length === LIMIT;
           initialDoneRef.current = true;
           setHasMore(hasMoreRef.current);
@@ -95,7 +88,6 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
   );
 
   /* ---------- RESET + FETCH PAGE 1 ---------- */
-
   const resetAndFetch = useCallback(
     (q: string) => {
       fetchGenRef.current += 1;
@@ -116,18 +108,13 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
     [fetchPage],
   );
 
-  /* ---------- INITIAL LOAD ON MOUNT ---------- */
-
+  /* ---------- INITIAL LOAD ---------- */
   useEffect(() => {
     resetAndFetch("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- SEARCH WITH 400ms DEBOUNCE ----------
-   * Each keystroke resets the debounce timer.
-   * When it fires, resetAndFetch hits /creators?search=query which queries
-   * ALL creators in MongoDB — not just the 100 currently on screen.
-   */
+  /* ---------- SEARCH WITH DEBOUNCE ---------- */
   const handleSearchChange = (value: string) => {
     setSearch(value);
     searchRef.current = value;
@@ -138,15 +125,13 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
     }, 400);
   };
 
-  /* ---------- LOAD NEXT PAGE (used by IntersectionObserver) ---------- */
-
+  /* ---------- LOAD NEXT PAGE ---------- */
   const loadMore = useCallback(() => {
     if (loadingRef.current || !hasMoreRef.current) return;
     fetchPage(pageRef.current, searchRef.current, fetchGenRef.current, false);
   }, [fetchPage]);
 
   /* ---------- INFINITE SCROLL ---------- */
-
   useEffect(() => {
     const target = observerTarget.current;
     if (!target) return;
@@ -165,7 +150,6 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
   }, [loadMore]);
 
   /* ---------- UI ---------- */
-
   const isEmpty   = !loading && creatorsList.length === 0;
   const noResults = isEmpty && search.trim().length > 0;
 
@@ -179,7 +163,7 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
           {total !== null
             ? search.trim()
               ? `${total.toLocaleString()} results for "${search}"`
-              : `${total.toLocaleString()} creators — click to filter their videos`
+              : `${total.toLocaleString()} creators — click to search their videos`
             : "Loading creators…"}
         </p>
       </div>
@@ -199,14 +183,14 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
         )}
       </div>
 
-      {/* No search results */}
+      {/* No results */}
       {noResults && (
         <div className="text-center py-16 text-content-muted">
           <p>No creators match "{search}"</p>
         </div>
       )}
 
-      {/* Empty DB state */}
+      {/* Empty DB */}
       {isEmpty && !search.trim() && !loading && (
         <div className="text-center py-24 text-content-muted">
           <p className="text-lg">No creators loaded yet.</p>
@@ -221,7 +205,11 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
         {creatorsList.map((creator, index) => (
           <motion.button
             key={creator.id}
-            onClick={() => onSelectCreator(creator.id)}
+            onClick={() => {
+              // Navigate to home and search for this creator's name —
+              // exactly the same as typing their name in the search bar.
+              onSearchCreator(creator.name);
+            }}
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.2, delay: Math.min(index * 0.015, 0.3) }}
@@ -245,14 +233,15 @@ export default function CreatorsView({ onSelectCreator }: CreatorsViewProps) {
               {creator.name}
             </h3>
 
+            {/* Label changes to "Search" to reflect the new behaviour */}
             <div className="mt-3 px-3 py-1 bg-primary/10 text-primary rounded-full text-xs font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-all transform translate-y-1 group-hover:translate-y-0">
-              View
+              Search
             </div>
           </motion.button>
         ))}
       </div>
 
-      {/* Sentinel div — IntersectionObserver target + loading spinner */}
+      {/* Sentinel */}
       <div ref={observerTarget} className="w-full py-10 flex justify-center">
         {loading && creatorsList.length > 0 && (
           <Loader2 className="w-8 h-8 text-primary animate-spin" />

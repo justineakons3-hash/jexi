@@ -169,10 +169,10 @@ export default function App() {
             ) : currentView === "creators" ? (
               // CreatorsView fetches its own data — no creators prop needed
               <CreatorsView
-                onSelectCreator={(id) => {
-                  setSelectedCategory(null);
-                  setSelectedCreatorId(id);
-                  setCurrentView("home");
+                onSelectCreator={(id) => setSelectedCreatorId(id)}
+                onSearchCreator={(name) => {
+                  setSearchQuery(name); // fills the search bar
+                  setCurrentView("home"); // navigates back to the feed
                 }}
               />
             ) : (
