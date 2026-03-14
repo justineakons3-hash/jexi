@@ -1,0 +1,576 @@
+import {
+  useState,
+  MouseEvent,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
+import { motion } from "motion/react";
+import { Play, Heart, Bookmark, ArrowLeft, ChevronDown } from "lucide-react";
+import { Video, Creator } from "../types";
+import { LOADING_GIF_PATH } from "../constants";
+import VideoPlayer from "./VideoPlayer";
+import axios from "axios";
+import { FC } from "react";
+
+export interface VideoFeedProps {
+  videos: Video[];
+  creators: Creator[];
+  selectedCreatorId: string | null;
+  selectedCategory?: string | null;
+  onSelectCreator: (id: string | null) => void;
+  savedVideoIds: string[];
+  likedVideoIds: string[];
+  onToggleSave: (id: string) => void;
+  onToggleLike: (id: string) => void;
+  searchQuery: string;
+  onVideosSeen?: (videos: Video[]) => void;
+}
+
+interface VideoCardProps {
+  video: Video;
+  creator?: Creator;
+  onSelectCreator: (id: string | null) => void;
+  onClick: () => void;
+  isSaved: boolean;
+  isLiked: boolean;
+  onToggleSave: (id: string) => void;
+  onToggleLike: (id: string) => void;
+}
+
+type SourceFilter = "all" | "eporner" | "hqporner";
+
+/* ---------------- SOURCE BADGE ---------------- */
+
+const SourceBadge: FC<{ type: string }> = ({ type }) => {
+  if (type === "hqporner") {
+    return (
+      <div className="absolute top-2 left-2 bg-amber-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-md tracking-wide shadow-md z-10 select-none">
+        HQ
+      </div>
+    );
+  }
+  if (type === "eporner") {
+    return (
+      <div className="absolute top-2 left-2 bg-rose-600 text-white text-[10px] font-black px-1.5 py-0.5 rounded-md tracking-wide shadow-md z-10 select-none">
+        E
+      </div>
+    );
+  }
+  return null;
+};
+
+/* ---------------- VIDEO CARD ---------------- */
+
+export const VideoCard: FC<VideoCardProps> = ({
+  video,
+  creator,
+  onSelectCreator,
+  onClick,
+  isSaved,
+  isLiked,
+  onToggleSave,
+  onToggleLike,
+}) => {
+  const [rotateX, setRotateX] = useState(0);
+  const [rotateY, setRotateY] = useState(0);
+
+  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    setRotateX(((y - centerY) / centerY) * -10);
+    setRotateY(((x - centerX) / centerX) * 10);
+  };
+
+  const handleMouseLeave = () => {
+    setRotateX(0);
+    setRotateY(0);
+  };
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 50 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.5 }}
+      style={{ perspective: 1000 }}
+    >
+      <motion.div
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        animate={{ rotateX, rotateY }}
+        transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        className="group relative bg-surface/60 backdrop-blur-xl rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl border border-border-subtle"
+      >
+        <div
+          className="relative aspect-video cursor-pointer overflow-hidden"
+          onClick={onClick}
+        >
+          <SourceBadge type={video.type} />
+
+          <img
+            src={video.thumbnail}
+            alt={video.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            referrerPolicy="no-referrer"
+          />
+
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center">
+            <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center">
+              <Play className="w-6 h-6 text-white ml-1" />
+            </div>
+          </div>
+
+          {video.duration && (
+            <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded-md">
+              {video.duration}
+            </div>
+          )}
+        </div>
+
+        <div className="p-4">
+          <div className="flex justify-between mb-2">
+            <h3 className="font-semibold text-lg line-clamp-2">
+              {video.title}
+            </h3>
+
+            <div className="flex gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleLike(video.id);
+                }}
+              >
+                <Heart
+                  className={`w-4 h-4 ${isLiked ? "fill-current text-rose-500" : ""}`}
+                />
+              </button>
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleSave(video.id);
+                }}
+              >
+                <Bookmark
+                  className={`w-4 h-4 ${isSaved ? "fill-current text-primary" : ""}`}
+                />
+              </button>
+            </div>
+          </div>
+
+          {creator && (
+            <div className="flex items-center gap-3">
+              <img
+                src={creator.avatar}
+                alt={creator.name}
+                className="w-8 h-8 rounded-full"
+                referrerPolicy="no-referrer"
+              />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectCreator(creator.id);
+                }}
+                className="text-sm hover:text-primary"
+              >
+                {creator.name}
+              </button>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+/* ---------------- SOURCE FILTER DROPDOWN ---------------- */
+
+const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
+  { value: "all",      label: "All Sources" },
+  { value: "eporner",  label: "Eporner" },
+  { value: "hqporner", label: "HQ Porner" },
+];
+
+const SourceDropdown: FC<{
+  value: SourceFilter;
+  onChange: (v: SourceFilter) => void;
+}> = ({ value, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: globalThis.MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const selected = SOURCE_OPTIONS.find((o) => o.value === value)!;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-4 py-2 bg-surface/60 backdrop-blur border border-border-subtle rounded-xl text-sm font-medium hover:border-primary/50 transition-colors"
+      >
+        {/* Colour dot */}
+        <span
+          className={`w-2 h-2 rounded-full flex-shrink-0 ${
+            value === "eporner"
+              ? "bg-rose-600"
+              : value === "hqporner"
+              ? "bg-amber-500"
+              : "bg-content-muted"
+          }`}
+        />
+        {selected.label}
+        <ChevronDown
+          className={`w-4 h-4 text-content-muted transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          transition={{ duration: 0.15 }}
+          className="absolute left-0 top-full mt-2 w-44 bg-surface/95 backdrop-blur-md border border-border-subtle rounded-xl shadow-2xl overflow-hidden z-50"
+        >
+          {SOURCE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors hover:bg-white/10 ${
+                value === opt.value ? "text-primary font-semibold" : "text-content"
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  opt.value === "eporner"
+                    ? "bg-rose-600"
+                    : opt.value === "hqporner"
+                    ? "bg-amber-500"
+                    : "bg-content-muted"
+                }`}
+              />
+              {opt.label}
+            </button>
+          ))}
+        </motion.div>
+      )}
+    </div>
+  );
+};
+
+/* ---------------- VIDEO FEED ---------------- */
+
+export default function VideoFeed({
+  creators,
+  selectedCreatorId,
+  selectedCategory,
+  onSelectCreator,
+  savedVideoIds,
+  likedVideoIds,
+  onToggleSave,
+  onToggleLike,
+  searchQuery,
+  onVideosSeen,
+}: VideoFeedProps) {
+  const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
+
+  // Source filter — "all" | "eporner" | "hqporner"
+  // Changing this resets and reloads the feed via the unified reset effect below.
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+
+  const pageRef = useRef(1);
+  const [feedVideos, setFeedVideos] = useState<Video[]>([]);
+  const [top10Videos, setTop10Videos] = useState<Video[]>([]);
+  const [activeVideo, setActiveVideo] = useState<Video | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+
+  const loadingRef = useRef(false);
+  const hasMoreRef = useRef(true);
+  const fetchGenRef = useRef(0);
+  const initialLoadDoneRef = useRef(false);
+  const observerTarget = useRef<HTMLDivElement>(null);
+
+  /* ---------- CREATOR MAP ---------- */
+
+  const creatorMap = useMemo(() => {
+    const map: Record<string, Creator> = {};
+    if (!Array.isArray(creators)) return map;
+    creators.forEach((c) => { if (c?.id) map[c.id] = c; });
+    return map;
+  }, [creators]);
+
+  /* ---------- TOP 10 ---------- */
+
+  useEffect(() => {
+    const fetchTop10 = async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/videos/top10`);
+        const data: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
+        setTop10Videos(data);
+      } catch (err) {
+        console.error("Top10 fetch error:", err);
+      }
+    };
+    fetchTop10();
+  }, [API_BASE]);
+
+  /* ---------- BUILD URL HELPER ---------- */
+
+  const buildUrl = useCallback(
+    (page: number) => {
+      // Search always uses eporner API regardless of sourceFilter
+      if (searchQuery?.trim()) {
+        return `${API_BASE}/videos?page=${page}&limit=20&search=${encodeURIComponent(searchQuery)}`;
+      }
+      const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
+      return `${API_BASE}/videos?page=${page}&limit=20${sourceParam}`;
+    },
+    [searchQuery, sourceFilter, API_BASE],
+  );
+
+  /* ---------- LOAD VIDEOS (infinite scroll pages 2+) ---------- */
+
+  const loadVideos = useCallback(async () => {
+    if (loadingRef.current || !hasMoreRef.current) return;
+
+    loadingRef.current = true;
+    setLoading(true);
+
+    const myGen = fetchGenRef.current;
+    const currentPage = pageRef.current;
+
+    try {
+      const res = await axios.get(buildUrl(currentPage), {
+        headers: { "Cache-Control": "no-cache" },
+      });
+
+      if (myGen !== fetchGenRef.current) return;
+
+      const newVideos: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
+
+      if (newVideos.length === 0) {
+        hasMoreRef.current = false;
+        setHasMore(false);
+      } else {
+        setFeedVideos((prev) => [...prev, ...newVideos]);
+        pageRef.current = currentPage + 1;
+        initialLoadDoneRef.current = true;
+        onVideosSeen?.(newVideos);
+      }
+    } catch (err) {
+      console.error("Video load error:", err);
+    } finally {
+      if (myGen === fetchGenRef.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    }
+  }, [buildUrl, onVideosSeen]);
+
+  /* ---------- RESET + INITIAL LOAD ----------
+   * Runs when searchQuery OR sourceFilter changes.
+   * Both trigger a full feed reset and re-fetch from page 1.
+   */
+
+  useEffect(() => {
+    fetchGenRef.current += 1;
+    pageRef.current = 1;
+    hasMoreRef.current = true;
+    loadingRef.current = false;
+    initialLoadDoneRef.current = false;
+
+    setFeedVideos([]);
+    setHasMore(true);
+    setLoading(false);
+
+    const myGen = fetchGenRef.current;
+
+    const fetchFirstPage = async () => {
+      loadingRef.current = true;
+      setLoading(true);
+
+      try {
+        const res = await axios.get(buildUrl(1), {
+          headers: { "Cache-Control": "no-cache" },
+        });
+
+        if (myGen !== fetchGenRef.current) return;
+
+        const newVideos: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
+
+        if (newVideos.length === 0) {
+          hasMoreRef.current = false;
+          setHasMore(false);
+        } else {
+          setFeedVideos(newVideos);
+          pageRef.current = 2;
+          initialLoadDoneRef.current = true;
+          onVideosSeen?.(newVideos);
+        }
+      } catch (err) {
+        console.error("Video load error:", err);
+      } finally {
+        if (myGen === fetchGenRef.current) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchFirstPage();
+  // buildUrl captures both searchQuery and sourceFilter, so this effect
+  // correctly re-runs whenever either one changes.
+  }, [buildUrl]);
+
+  /* ---------- INFINITE SCROLL ---------- */
+
+  useEffect(() => {
+    const target = observerTarget.current;
+    if (!target) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && initialLoadDoneRef.current) {
+          loadVideos();
+        }
+      },
+      { rootMargin: "300px" },
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [loadVideos]);
+
+  /* ---------- UI ---------- */
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-8 items-start">
+      {/* SIDEBAR — Top 10 */}
+      <div className="w-full lg:w-1/4 xl:w-1/5">
+        <h2 className="text-2xl font-bold mb-6">Top 10 Videos</h2>
+
+        {top10Videos.length === 0 && loading && (
+          <p className="text-sm text-content-muted animate-pulse">Loading…</p>
+        )}
+
+        <div className="space-y-4">
+          {top10Videos.map((video, index) => {
+            const creator = creatorMap[video.creatorId];
+            return (
+              <div
+                key={video.id}
+                className="flex gap-3 cursor-pointer group/top"
+                onClick={() => setActiveVideo(video)}
+              >
+                <span className="text-2xl font-black text-content-muted/30 w-6 flex-shrink-0 leading-none mt-1 group-hover/top:text-primary transition-colors">
+                  {index + 1}
+                </span>
+
+                <div className="relative flex-shrink-0">
+                  <img
+                    src={video.thumbnail}
+                    className="w-20 h-12 rounded-lg object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                  {(video.type === "hqporner" || video.type === "eporner") && (
+                    <div
+                      className={`absolute top-1 left-1 text-white text-[8px] font-black px-1 py-0.5 rounded-sm leading-none ${
+                        video.type === "hqporner" ? "bg-amber-500" : "bg-rose-600"
+                      }`}
+                    >
+                      {video.type === "hqporner" ? "HQ" : "E"}
+                    </div>
+                  )}
+                </div>
+
+                <div className="min-w-0">
+                  <h4 className="text-sm font-semibold line-clamp-2 group-hover/top:text-primary transition-colors">
+                    {video.title}
+                  </h4>
+                  <span className="text-xs text-content-muted">
+                    {creator?.name ?? video.creatorId}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* MAIN FEED */}
+      <div className="flex-1">
+        {activeVideo ? (
+          <>
+            <button
+              onClick={() => setActiveVideo(null)}
+              className="flex items-center gap-2 mb-6"
+            >
+              <ArrowLeft className="w-4 h-4" /> Back to Feed
+            </button>
+
+            <VideoPlayer
+              src={activeVideo.url}
+              type={activeVideo.type}
+              title={activeVideo.title}
+            />
+          </>
+        ) : (
+          <>
+            {/* FEED HEADER — filter dropdown */}
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">
+                {sourceFilter === "all"
+                  ? "All Videos"
+                  : sourceFilter === "eporner"
+                  ? "Eporner Videos"
+                  : "HQ Porner Videos"}
+              </h2>
+              <SourceDropdown value={sourceFilter} onChange={setSourceFilter} />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
+              {feedVideos.map((video) => {
+                const creator = creatorMap[video.creatorId];
+                return (
+                  <VideoCard
+                    key={video.id}
+                    video={video}
+                    creator={creator}
+                    onSelectCreator={onSelectCreator}
+                    onClick={() => setActiveVideo(video)}
+                    isSaved={savedVideoIds.includes(video.id)}
+                    isLiked={likedVideoIds.includes(video.id)}
+                    onToggleSave={onToggleSave}
+                    onToggleLike={onToggleLike}
+                  />
+                );
+              })}
+            </div>
+
+            <div ref={observerTarget} className="w-full py-12 flex justify-center">
+              {loading && (
+                <img src={LOADING_GIF_PATH} alt="Loading..." className="w-10 h-10" />
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
