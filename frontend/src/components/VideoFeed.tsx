@@ -275,12 +275,18 @@ export default function VideoFeed({
   const loadingRef         = useRef(false);
   const hasMoreRef         = useRef(true);
   const fetchGenRef        = useRef(0);
-  const initialLoadDoneRef = useRef(false);
   const sourceFilterRef    = useRef<SourceFilter>("all");
   const debouncedSearchRef = useRef("");
   const observerTarget     = useRef<HTMLDivElement>(null);
 
-  // Keep refs in sync so infinite-scroll callback always reads current values
+  // ── KEY FIX for infinite scroll ──
+  // Tracks whether the sentinel div is currently inside the viewport.
+  // IntersectionObserver fires ONCE when the element enters view.
+  // If it fires while page 1 is still loading, we return early —
+  // but the observer never fires again. So after page 1 finishes,
+  // we check this ref and immediately load page 2 if still in view.
+  const sentinelInViewRef = useRef(false);
+
   sourceFilterRef.current    = sourceFilter;
   debouncedSearchRef.current = debouncedSearch;
 
@@ -305,26 +311,18 @@ export default function VideoFeed({
     })();
   }, [API_BASE]);
 
-  /* ──── BUILD URL ────
-   * KEY FIX: source filter is ALWAYS appended, even during search.
-   * Previously the search branch returned early without &source=,
-   * so the sort dropdown had zero effect on search results.
-   */
+  /* ──── BUILD URL ──── */
   const buildUrl = useCallback((page: number) => {
     const search = debouncedSearchRef.current;
     const source = sourceFilterRef.current;
-
-    // source param — included in BOTH search and feed modes
     const sourceParam = source !== "all" ? `&source=${source}` : "";
-
     if (search.trim()) {
       return (
         `${API_BASE}/videos?page=${page}&limit=20` +
         `&search=${encodeURIComponent(search)}` +
-        sourceParam   // ← this was missing before
+        sourceParam
       );
     }
-
     return `${API_BASE}/videos?page=${page}&limit=20${sourceParam}`;
   }, [API_BASE]);
 
@@ -351,9 +349,27 @@ export default function VideoFeed({
         } else {
           setFeedVideos((prev) => [...prev, ...newVideos]);
         }
-        pageRef.current            = page + 1;
-        initialLoadDoneRef.current = true;
+        pageRef.current = page + 1;
         onVideosSeen?.(newVideos);
+
+        // ── INFINITE SCROLL FIX ──
+        // After page 1 loads, if the sentinel is still in the viewport
+        // (common on fast connections / large screens), immediately load
+        // the next page. Without this, the user has to scroll down and
+        // back up to trigger the observer again.
+        if (page === 1 && sentinelInViewRef.current && hasMoreRef.current) {
+          // Small delay so the DOM updates first
+          setTimeout(() => {
+            if (
+              gen === fetchGenRef.current &&
+              !loadingRef.current &&
+              hasMoreRef.current &&
+              sentinelInViewRef.current
+            ) {
+              fetchPage(pageRef.current, gen);
+            }
+          }, 100);
+        }
       }
     } catch (err) {
       console.error("Video fetch error:", err);
@@ -365,38 +381,48 @@ export default function VideoFeed({
     }
   }, [buildUrl, onVideosSeen]);
 
-  /* ──── RESET + INITIAL LOAD ────
-   * Direct deps on debouncedSearch AND sourceFilter so both
-   * trigger a clean reset+refetch correctly.
-   */
+  /* ──── RESET + INITIAL LOAD ──── */
   useEffect(() => {
     const gen = ++fetchGenRef.current;
-    pageRef.current            = 1;
-    hasMoreRef.current         = true;
-    loadingRef.current         = false;
-    initialLoadDoneRef.current = false;
+    pageRef.current         = 1;
+    hasMoreRef.current      = true;
+    loadingRef.current      = false;
+    sentinelInViewRef.current = false; // reset sentinel state on filter change
     setFeedVideos([]);
     setHasMore(true);
     setLoading(false);
     fetchPage(1, gen);
   }, [debouncedSearch, sourceFilter, fetchPage]);
 
-  /* ──── INFINITE SCROLL ──── */
-  const loadMore = useCallback(() => {
-    if (loadingRef.current || !hasMoreRef.current || !initialLoadDoneRef.current) return;
-    fetchPage(pageRef.current, fetchGenRef.current);
-  }, [fetchPage]);
-
+  /* ──── INTERSECTION OBSERVER ────
+   * Stores current intersection state in sentinelInViewRef so
+   * fetchPage can read it after the initial load finishes.
+   * Also directly triggers loadMore while scrolling normally.
+   */
   useEffect(() => {
     const target = observerTarget.current;
     if (!target) return;
+
     const observer = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) loadMore(); },
-      { rootMargin: "300px" },
+      (entries) => {
+        const isIntersecting = entries[0].isIntersecting;
+        sentinelInViewRef.current = isIntersecting;
+
+        if (isIntersecting && !loadingRef.current && hasMoreRef.current) {
+          // If still on page 1 (initial load in progress), fetchPage will
+          // handle this via the sentinelInViewRef check above.
+          // For page 2+ (normal scroll), load immediately.
+          if (pageRef.current > 1) {
+            fetchPage(pageRef.current, fetchGenRef.current);
+          }
+        }
+      },
+      { rootMargin: "400px" },
     );
+
     observer.observe(target);
     return () => observer.disconnect();
-  }, [loadMore]);
+  }, [fetchPage]);
 
   /* ──── HEADING ──── */
   const headingTitle = debouncedSearch.trim()
@@ -481,7 +507,6 @@ export default function VideoFeed({
           </>
         ) : (
           <>
-            {/* FEED HEADER — source dropdown always visible */}
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold">{headingTitle}</h2>
               <SourceDropdown value={sourceFilter} onChange={setSourceFilter} />
