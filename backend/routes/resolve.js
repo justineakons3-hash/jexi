@@ -8,8 +8,9 @@
  *   Step 1. cloudscraper fetches HQPorner page (bypasses Cloudflare JA3 check)
  *           → extracts mydaddy.cc embed token
  *   Step 2. Fetch mydaddy.cc embed page → extract bigcdn.cc MP4 URLs
- *   Step 3. Return raw CDN URLs directly to frontend
- *           (stream.js now does a 302 redirect so no proxying needed)
+ *   Step 3. Wrap CDN URLs in /api/stream proxy so Referer is set correctly
+ *           (bigcdn.cc enforces Referer — browsers can't set custom Referer
+ *            on <video> elements so a direct redirect doesn't work)
  */
 
 const express      = require("express");
@@ -72,9 +73,20 @@ function ensureHttps(url) {
   return url;
 }
 
+/**
+ * Wrap a CDN URL in the /api/stream proxy, passing the exact
+ * HQPorner page URL as `ref` so stream.js sets the correct Referer.
+ */
+function toProxyUrl(cdnUrl, pageUrl) {
+  const base = (process.env.BACKEND_URL || "").replace(/\/$/, "");
+  return (
+    `${base}/api/stream` +
+    `?url=${encodeURIComponent(cdnUrl)}` +
+    `&ref=${encodeURIComponent(pageUrl)}`
+  );
+}
+
 // ── step 1: cloudscraper fetches HQPorner page ────────────────────────────────
-// cloudscraper executes Cloudflare's JS challenge and uses a real browser
-// TLS fingerprint (JA3) — CF can't distinguish it from a real browser.
 
 function buildUrlVariants(pageUrl) {
   const variants = [pageUrl];
@@ -117,7 +129,6 @@ async function getEmbedToken(pageUrl) {
         });
       });
 
-      // Extract mydaddy.cc token from page HTML
       const match = html.match(/mydaddy\.cc\/video\/([a-f0-9]+)\//i);
       if (match) {
         return { token: match[1], embedUrl: `https://mydaddy.cc/video/${match[1]}/` };
@@ -184,12 +195,25 @@ async function resolve(pageUrl) {
     throw new Error("No CDN URLs found — player structure may have changed");
   }
 
-  // Return raw CDN URLs — stream.js does a 302 redirect so no proxy wrapping needed.
-  // Browser downloads directly from bigcdn.cc at full speed, no Render bottleneck.
   const qualityMap = buildQualityMap(cdnUrls);
-  const bestUrl    = pickBestQuality(cdnUrls);
+  const bestRaw    = pickBestQuality(cdnUrls);
 
-  return { bestUrl, qualityMap };
+  // Return both direct CDN URLs and proxy-wrapped URLs.
+  // Frontend tries direct first (faster, no Render bottleneck).
+  // Falls back to proxy if direct fails (bigcdn.cc Referer enforcement).
+  const proxiedMap = {};
+  const directMap  = {};
+  for (const [q, u] of Object.entries(qualityMap)) {
+    proxiedMap[q] = toProxyUrl(u, pageUrl);
+    directMap[q]  = u;
+  }
+
+  return {
+    bestUrl:       bestRaw,            // direct CDN URL — try first
+    proxyUrl:      toProxyUrl(bestRaw, pageUrl), // proxy fallback
+    qualityMap:    directMap,          // direct quality URLs
+    proxyQualityMap: proxiedMap,       // proxy quality URLs
+  };
 }
 
 // ── route handler ─────────────────────────────────────────────────────────────
@@ -197,69 +221,78 @@ async function resolve(pageUrl) {
 router.post("/", async (req, res) => {
   const { pageUrl, videoId } = req.body;
 
-  if (!pageUrl) {
-    return res.status(400).json({ error: "pageUrl is required" });
-  }
+  if (!pageUrl) return res.status(400).json({ error: "pageUrl is required" });
 
   console.log("[resolve] pageUrl received:", pageUrl);
 
   try {
-    // Cache check — invalidate old proxy-wrapped URLs (they contain /api/stream)
-    // so they get re-resolved to direct CDN URLs
+    // Cache hit — only accept proxy URLs (not old direct CDN URLs)
     if (videoId) {
       const cached = await Video.findOne({ id: videoId }).lean();
       if (
         cached?.cdnUrl &&
-        !cached.cdnUrl.includes("/api/stream") && // must be a direct CDN URL
-        cached.cdnUrl.includes("bigcdn.cc")
+        cached.cdnUrl.includes("/api/stream") &&
+        cached.cdnUrl.includes("&ref=")
       ) {
         console.log(`[resolve] cache hit: ${videoId}`);
+        // Reconstruct direct CDN URL from stored proxy URL for the fast-path attempt
+        const directUrl = (() => {
+          try {
+            const u = new URL(cached.cdnUrl.includes("http") ? cached.cdnUrl : "http://x" + cached.cdnUrl);
+            const raw = u.searchParams.get("url");
+            return raw ? decodeURIComponent(raw) : null;
+          } catch { return null; }
+        })();
+        const directQualityMap = {};
+        for (const [q, pu] of Object.entries(cached.cdnQualities || {})) {
+          try {
+            const u = new URL(pu.includes("http") ? pu : "http://x" + pu);
+            const raw = u.searchParams.get("url");
+            if (raw) directQualityMap[q] = decodeURIComponent(raw);
+          } catch { /* skip */ }
+        }
         return res.json({
-          cdnUrl:     cached.cdnUrl,
-          qualityMap: cached.cdnQualities || {},
-          cached:     true,
+          cdnUrl:          directUrl || cached.cdnUrl,
+          proxyUrl:        cached.cdnUrl,
+          qualityMap:      Object.keys(directQualityMap).length ? directQualityMap : cached.cdnQualities || {},
+          proxyQualityMap: cached.cdnQualities || {},
+          cached:          true,
         });
       }
     }
 
-    const { bestUrl, qualityMap } = await resolve(pageUrl);
-    console.log(`[resolve] ✓ ${bestUrl}`);
+    const { bestUrl, proxyUrl, qualityMap, proxyQualityMap } = await resolve(pageUrl);
+    console.log(`[resolve] ✓ direct: ${bestUrl}`);
     console.log(`[resolve] qualities: ${Object.keys(qualityMap).join(", ")}`);
 
     if (videoId) {
       await Video.updateOne(
         { id: videoId },
-        { $set: { cdnUrl: bestUrl, cdnQualities: qualityMap, deleted: false } }
+        { $set: { cdnUrl: proxyUrl, cdnQualities: proxyQualityMap, deleted: false } }
       ).catch(() => {});
     }
 
-    return res.json({ cdnUrl: bestUrl, qualityMap, cached: false });
+    return res.json({
+      cdnUrl:          bestUrl,       // direct CDN — browser tries this first
+      proxyUrl,                       // proxy fallback via /api/stream
+      qualityMap,                     // direct quality URLs
+      proxyQualityMap,                // proxy quality URLs
+      cached: false,
+    });
 
   } catch (err) {
     console.error("[resolve] error:", err.message);
 
     if (err.code === "DELETED") {
-      // Mark in DB so feed stops showing it
       try {
-        if (videoId) {
-          await Video.updateOne({ id: videoId }, { $set: { deleted: true } });
-        } else {
-          await Video.updateOne({ url: pageUrl }, { $set: { deleted: true } });
-        }
+        if (videoId) await Video.updateOne({ id: videoId }, { $set: { deleted: true } });
+        else         await Video.updateOne({ url: pageUrl }, { $set: { deleted: true } });
         console.log(`[resolve] marked deleted: ${videoId || pageUrl}`);
       } catch (_) {}
-
-      return res.status(200).json({
-        error:       err.message,
-        deleted:     true,
-        fallbackUrl: pageUrl,
-      });
+      return res.status(200).json({ error: err.message, deleted: true, fallbackUrl: pageUrl });
     }
 
-    return res.status(200).json({
-      error:       err.message,
-      fallbackUrl: pageUrl,
-    });
+    return res.status(200).json({ error: err.message, fallbackUrl: pageUrl });
   }
 });
 

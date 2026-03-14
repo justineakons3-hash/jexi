@@ -14,15 +14,12 @@ interface VideoPlayerProps {
   videoId?: string;
 }
 
-type QualityMap = Record<string, string>; // { "360": url, "720": url, … }
+type QualityMap = Record<string, string>;
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
 /* ─────────────────────────────────────────────────────────────
    HQPORNER PLAYER
-   Resolves the CDN URL on demand via POST /api/videos/resolve.
-   BUG FIX: removed `window.open(fallback)` auto-redirect.
-   Now stores fallbackUrl in state and shows a manual button.
 ───────────────────────────────────────────────────────────── */
 function HQPornerPlayer({
   src,
@@ -35,16 +32,20 @@ function HQPornerPlayer({
 }) {
   type State = "idle" | "loading" | "playing" | "error" | "deleted";
 
-  const [state, setState]             = useState<State>("idle");
-  const [cdnUrl, setCdnUrl]           = useState<string>("");
-  const [qualityMap, setQualityMap]   = useState<QualityMap>({});
-  const [errMsg, setErrMsg]           = useState<string>("");
-  const [fallbackUrl, setFallbackUrl] = useState<string>("");   // ← NEW
+  const [state, setState]                   = useState<State>("idle");
+  const [cdnUrl, setCdnUrl]                 = useState<string>("");
+  const [proxyUrl, setProxyUrl]             = useState<string>("");
+  const [qualityMap, setQualityMap]         = useState<QualityMap>({});
+  const [proxyQualityMap, setProxyQualityMap] = useState<QualityMap>({});
+  const [usingProxy, setUsingProxy]         = useState(false);
+  const [errMsg, setErrMsg]                 = useState<string>("");
+  const [fallbackUrl, setFallbackUrl]       = useState<string>("");
 
   const handlePlay = async () => {
     setState("loading");
     setErrMsg("");
     setFallbackUrl("");
+    setUsingProxy(false);
 
     try {
       const res = await axios.post(`${API_BASE}/videos/resolve`, {
@@ -52,11 +53,14 @@ function HQPornerPlayer({
         videoId,
       });
 
-      const url = res.data?.cdnUrl;
-      if (!url) throw new Error("No CDN URL returned");
+      const directUrl = res.data?.cdnUrl;
+      const pUrl      = res.data?.proxyUrl || res.data?.cdnUrl;
+      if (!directUrl) throw new Error("No CDN URL returned");
 
+      setProxyUrl(pUrl);
       setQualityMap(res.data?.qualityMap || {});
-      setCdnUrl(url);
+      setProxyQualityMap(res.data?.proxyQualityMap || res.data?.qualityMap || {});
+      setCdnUrl(directUrl);  // try direct first
       setState("playing");
     } catch (err: any) {
       const data     = (err?.response?.data || {}) as any;
@@ -65,7 +69,6 @@ function HQPornerPlayer({
 
       setFallbackUrl(fallback);
 
-      // Backend explicitly marks removed videos — show a clean deleted state
       if (data.deleted) {
         setState("deleted");
       } else {
@@ -75,8 +78,28 @@ function HQPornerPlayer({
     }
   };
 
+  // Called by NativePlayer when the direct CDN URL fails to load
+  const handleDirectFailed = () => {
+    if (proxyUrl && !usingProxy) {
+      console.log("[player] direct CDN failed, switching to proxy");
+      setUsingProxy(true);
+      setCdnUrl(proxyUrl);
+      setQualityMap(proxyQualityMap);
+    } else {
+      setState("error");
+      setErrMsg("Could not load video stream.");
+    }
+  };
+
   if (state === "playing" && cdnUrl) {
-    return <NativePlayer src={cdnUrl} title={title} qualityMap={qualityMap} />;
+    return (
+      <NativePlayer
+        src={cdnUrl}
+        title={title}
+        qualityMap={qualityMap}
+        onDirectFailed={!usingProxy ? handleDirectFailed : undefined}
+      />
+    );
   }
 
   return (
@@ -154,16 +177,18 @@ function HQPornerPlayer({
 }
 
 /* ─────────────────────────────────────────────────────────────
-   NATIVE VIDEO PLAYER  (used for HQPorner CDN streams + mp4)
+   NATIVE VIDEO PLAYER
 ───────────────────────────────────────────────────────────── */
 function NativePlayer({
   src,
   title,
   qualityMap = {},
+  onDirectFailed,
 }: {
   src: string;
   title: string;
   qualityMap?: QualityMap;
+  onDirectFailed?: () => void;
 }) {
   const videoRef     = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -176,7 +201,6 @@ function NativePlayer({
   const [quality, setQuality]           = useState<string>(availableQualities[0] || "auto");
   const [activeSrc, setActiveSrc]       = useState<string>(src);
   const [showSettings, setShowSettings] = useState(false);
-
   const [isPlaying, setIsPlaying]       = useState(false);
   const [volume, setVolume]             = useState(1);
   const [isMuted, setIsMuted]           = useState(false);
@@ -300,6 +324,13 @@ function NativePlayer({
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
     >
+      {/*
+        referrerPolicy="no-referrer" — suppresses the Referer header so bigcdn.cc
+        sees no referrer at all. This is fine because bigcdn.cc doesn't enforce
+        strict Referer checks on direct MP4 Range requests from browsers.
+        Without this, the browser would send Referer: https://your-render-app.com
+        which bigcdn.cc would reject.
+      */}
       <video
         ref={videoRef}
         src={activeSrc}
@@ -317,6 +348,7 @@ function NativePlayer({
         onPlaying={() => setIsBuffering(false)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
+        onError={() => { if (onDirectFailed) onDirectFailed(); }}
         onClick={() =>
           window.matchMedia("(pointer: coarse)").matches
             ? setShowControls((v) => !v)
@@ -338,8 +370,7 @@ function NativePlayer({
             src={LOADING_GIF_PATH}
             alt="Buffering"
             className="w-16 h-16 object-contain"
-            referrerPolicy="no-referrer"
-          />
+              />
         </div>
       )}
 
@@ -349,13 +380,9 @@ function NativePlayer({
           showControls ? "opacity-100" : "opacity-0"
         }`}
       >
-        {/* Progress bar */}
         <div className="mb-4">
           <input
-            type="range"
-            min="0"
-            max="100"
-            value={progress}
+            type="range" min="0" max="100" value={progress}
             onChange={handleSeek}
             onClick={(e) => e.stopPropagation()}
             className="w-full h-1 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
@@ -366,38 +393,23 @@ function NativePlayer({
         </div>
 
         <div className="flex items-center justify-between">
-          {/* Left controls */}
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 5; }}
-              className="text-white hover:text-primary transition-colors"
-            >
+            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 5; }} className="text-white hover:text-primary transition-colors">
               <Rewind className="w-5 h-5" />
             </button>
             <button onClick={togglePlay} className="text-white hover:text-primary transition-colors">
               {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
             </button>
-            <button
-              onClick={() => { if (videoRef.current) videoRef.current.currentTime += 5; }}
-              className="text-white hover:text-primary transition-colors"
-            >
+            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime += 5; }} className="text-white hover:text-primary transition-colors">
               <FastForward className="w-5 h-5" />
             </button>
 
             <div className="flex items-center gap-2 group/vol">
               <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
-                {isMuted || volume === 0 ? (
-                  <VolumeX className="w-5 h-5" />
-                ) : (
-                  <Volume2 className="w-5 h-5" />
-                )}
+                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </button>
               <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={isMuted ? 0 : volume}
+                type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
                 onChange={handleVolumeChange}
                 onClick={(e) => e.stopPropagation()}
                 className="w-20 h-1 rounded-full appearance-none cursor-pointer hidden group-hover/vol:block [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
@@ -412,7 +424,6 @@ function NativePlayer({
             </span>
           </div>
 
-          {/* Right controls */}
           <div className="flex items-center gap-4 relative">
             {hasQualities && (
               <div className="relative">
@@ -445,15 +456,8 @@ function NativePlayer({
               </div>
             )}
 
-            <button
-              onClick={toggleFullscreen}
-              className="text-white hover:text-primary transition-colors"
-            >
-              {isFullscreen ? (
-                <Minimize className="w-5 h-5" />
-              ) : (
-                <Maximize className="w-5 h-5" />
-              )}
+            <button onClick={toggleFullscreen} className="text-white hover:text-primary transition-colors">
+              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
             </button>
           </div>
         </div>
