@@ -7,8 +7,10 @@
  * Chain:
  *   Step 1. Fetch HQPorner page → extract mydaddy.cc embed token
  *   Step 2. Fetch mydaddy.cc embed page → extract bigcdn.cc MP4 URLs
- *   Step 3. Wrap each CDN URL in /api/stream?url=<encoded> so the browser
- *           never contacts bigcdn.cc directly (bypasses hotlink protection)
+ *   Step 3. Wrap each CDN URL in /api/stream?url=<encoded>&ref=<encoded-page-url>
+ *           The `ref` param tells the stream proxy which exact HQPorner page URL
+ *           to use as Referer — bigcdn.cc hotlink protection checks the specific
+ *           video page URL, not just the homepage.
  *   Step 4. Return bestUrl + qualityMap (all proxied)
  */
 
@@ -38,8 +40,9 @@ const hqHttp = axios.create({
     "Sec-Fetch-User":            "?1",
     "Cache-Control":             "max-age=0",
   },
-  maxRedirects: 5,
-  decompress: true,
+  maxRedirects:   5,
+  decompress:     true,
+  validateStatus: (status) => status < 500,
 });
 
 const embedHttp = axios.create({
@@ -52,7 +55,7 @@ const embedHttp = axios.create({
     "Origin":          "https://hqporner.com",
   },
   maxRedirects: 5,
-  decompress: true,
+  decompress:   true,
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -91,28 +94,44 @@ function ensureHttps(url) {
 }
 
 /**
- * Wrap a raw CDN URL in the /api/stream proxy endpoint.
- * BACKEND_URL must be set in your Render environment variables,
- * e.g. https://your-app.onrender.com
- * Falls back to a relative path for same-origin deployments.
+ * Wrap a raw CDN URL in /api/stream, forwarding the original HQPorner
+ * page URL as `ref` so the proxy sends it as the Referer header.
+ *
+ * bigcdn.cc checks the exact video page URL for hotlink protection —
+ * sending just https://hqporner.com/ (the homepage) fails for many videos.
  */
-function toProxyUrl(cdnUrl) {
+function toProxyUrl(cdnUrl, pageUrl) {
   const base = process.env.BACKEND_URL
     ? process.env.BACKEND_URL.replace(/\/$/, "")
     : "";
-  return `${base}/api/stream?url=${encodeURIComponent(cdnUrl)}`;
+  return (
+    `${base}/api/stream` +
+    `?url=${encodeURIComponent(cdnUrl)}` +
+    `&ref=${encodeURIComponent(pageUrl)}`  // ← exact HQPorner page URL
+  );
 }
 
 // ── step 1: get mydaddy token from HQPorner page HTML ────────────────────────
 
 async function getEmbedToken(pageUrl) {
-  let html;
+  let res;
   try {
-    const res = await hqHttp.get(pageUrl);
-    html = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
+    res = await hqHttp.get(pageUrl);
   } catch (e) {
     throw new Error(`HQPorner fetch failed: ${e.message}`);
   }
+
+  if (res.status === 404) {
+    throw new Error("Video page not found on HQPorner (404) — it may have been removed");
+  }
+  if (res.status === 403) {
+    throw new Error("HQPorner blocked the request (403) — Cloudflare protection");
+  }
+  if (res.status !== 200) {
+    throw new Error(`HQPorner returned unexpected status ${res.status}`);
+  }
+
+  const html = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
 
   const match = html.match(/mydaddy\.cc\/video\/([a-f0-9]+)\//i);
   if (match) {
@@ -124,7 +143,7 @@ async function getEmbedToken(pageUrl) {
     return { token: tokenMatch[1], embedUrl: `https://mydaddy.cc/video/${tokenMatch[1]}/` };
   }
 
-  throw new Error("Could not find mydaddy embed token — Cloudflare may be blocking the request");
+  throw new Error("Could not find embed token — Cloudflare may be blocking the request");
 }
 
 // ── step 2: get CDN URLs from mydaddy embed page ─────────────────────────────
@@ -140,8 +159,8 @@ async function getCdnUrlsFromEmbed(embedUrl, pageUrl) {
     throw new Error(`mydaddy.cc fetch failed: ${e.message}`);
   }
 
-  const cdnPattern  = /(?:https?:)?\/\/[a-z0-9]*\.?bigcdn\.cc\/pubs\/[^\s"'\\]+\.mp4/gi;
-  const rawMatches  = html.match(cdnPattern) || [];
+  const cdnPattern = /(?:https?:)?\/\/[a-z0-9]*\.?bigcdn\.cc\/pubs\/[^\s"'\\]+\.mp4/gi;
+  const rawMatches = html.match(cdnPattern) || [];
 
   const barePattern = /bigcdn\.cc\/pubs\/[^\s"'\\]+\.mp4/gi;
   const bareMatches = (html.match(barePattern) || []).map(u => "https://" + u);
@@ -170,11 +189,11 @@ async function resolve(pageUrl) {
   const qualityMap = buildQualityMap(cdnUrls);
   const bestRaw    = pickBestQuality(cdnUrls);
 
-  // Proxy every URL through /api/stream so Referer is always hqporner.com
-  const proxiedBest = toProxyUrl(bestRaw);
+  // Pass the exact HQPorner page URL as `ref` in every proxy URL
+  const proxiedBest = toProxyUrl(bestRaw, pageUrl);
   const proxiedMap  = {};
   for (const [q, u] of Object.entries(qualityMap)) {
-    proxiedMap[q] = toProxyUrl(u);
+    proxiedMap[q] = toProxyUrl(u, pageUrl);
   }
 
   return { bestUrl: proxiedBest, qualityMap: proxiedMap };
@@ -190,10 +209,10 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    // Cache check — but only use cache if it's already a proxy URL
+    // Cache check — only use if already a proxy URL with the ref param
     if (videoId) {
       const cached = await Video.findOne({ id: videoId }).lean();
-      if (cached?.cdnUrl && cached.cdnUrl.includes("/api/stream")) {
+      if (cached?.cdnUrl && cached.cdnUrl.includes("/api/stream") && cached.cdnUrl.includes("&ref=")) {
         console.log(`[resolve] cache hit: ${videoId}`);
         return res.json({ cdnUrl: cached.cdnUrl, qualityMap: cached.cdnQualities || {}, cached: true });
       }
@@ -203,7 +222,6 @@ router.post("/", async (req, res) => {
     console.log(`[resolve] ✓ ${bestUrl}`);
     console.log(`[resolve] qualities: ${Object.keys(qualityMap).join(", ")}`);
 
-    // Cache the proxied result
     if (videoId) {
       await Video.updateOne(
         { id: videoId },
@@ -215,8 +233,8 @@ router.post("/", async (req, res) => {
 
   } catch (err) {
     console.error("[resolve] error:", err.message);
-    return res.status(500).json({
-      error: err.message,
+    return res.status(200).json({
+      error:       err.message,
       fallbackUrl: pageUrl,
     });
   }

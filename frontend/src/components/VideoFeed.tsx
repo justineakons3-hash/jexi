@@ -41,8 +41,7 @@ interface VideoCardProps {
 
 type SourceFilter = "all" | "eporner" | "hqporner";
 
-/* ---------------- SOURCE BADGE ---------------- */
-
+/* ──────────────────── SOURCE BADGE ──────────────────── */
 const SourceBadge: FC<{ type: string }> = ({ type }) => {
   if (type === "hqporner") {
     return (
@@ -61,8 +60,7 @@ const SourceBadge: FC<{ type: string }> = ({ type }) => {
   return null;
 };
 
-/* ---------------- VIDEO CARD ---------------- */
-
+/* ──────────────────── VIDEO CARD ──────────────────── */
 export const VideoCard: FC<VideoCardProps> = ({
   video,
   creator,
@@ -77,19 +75,16 @@ export const VideoCard: FC<VideoCardProps> = ({
   const [rotateY, setRotateY] = useState(0);
 
   const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const centerX = rect.width / 2;
+    const rect    = e.currentTarget.getBoundingClientRect();
+    const x       = e.clientX - rect.left;
+    const y       = e.clientY - rect.top;
+    const centerX = rect.width  / 2;
     const centerY = rect.height / 2;
     setRotateX(((y - centerY) / centerY) * -10);
     setRotateY(((x - centerX) / centerX) * 10);
   };
 
-  const handleMouseLeave = () => {
-    setRotateX(0);
-    setRotateY(0);
-  };
+  const handleMouseLeave = () => { setRotateX(0); setRotateY(0); };
 
   return (
     <motion.div
@@ -112,20 +107,17 @@ export const VideoCard: FC<VideoCardProps> = ({
           onClick={onClick}
         >
           <SourceBadge type={video.type} />
-
           <img
             src={video.thumbnail}
             alt={video.title}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
             referrerPolicy="no-referrer"
           />
-
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center">
             <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center">
               <Play className="w-6 h-6 text-white ml-1" />
             </div>
           </div>
-
           {video.duration && (
             <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded-md">
               {video.duration}
@@ -135,35 +127,16 @@ export const VideoCard: FC<VideoCardProps> = ({
 
         <div className="p-4">
           <div className="flex justify-between mb-2">
-            <h3 className="font-semibold text-lg line-clamp-2">
-              {video.title}
-            </h3>
-
+            <h3 className="font-semibold text-lg line-clamp-2">{video.title}</h3>
             <div className="flex gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleLike(video.id);
-                }}
-              >
-                <Heart
-                  className={`w-4 h-4 ${isLiked ? "fill-current text-rose-500" : ""}`}
-                />
+              <button onClick={(e) => { e.stopPropagation(); onToggleLike(video.id); }}>
+                <Heart className={`w-4 h-4 ${isLiked ? "fill-current text-rose-500" : ""}`} />
               </button>
-
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleSave(video.id);
-                }}
-              >
-                <Bookmark
-                  className={`w-4 h-4 ${isSaved ? "fill-current text-primary" : ""}`}
-                />
+              <button onClick={(e) => { e.stopPropagation(); onToggleSave(video.id); }}>
+                <Bookmark className={`w-4 h-4 ${isSaved ? "fill-current text-primary" : ""}`} />
               </button>
             </div>
           </div>
-
           {creator && (
             <div className="flex items-center gap-3">
               <img
@@ -173,10 +146,7 @@ export const VideoCard: FC<VideoCardProps> = ({
                 referrerPolicy="no-referrer"
               />
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectCreator(creator.id);
-                }}
+                onClick={(e) => { e.stopPropagation(); onSelectCreator(creator.id); }}
                 className="text-sm hover:text-primary"
               >
                 {creator.name}
@@ -189,8 +159,7 @@ export const VideoCard: FC<VideoCardProps> = ({
   );
 };
 
-/* ---------------- SOURCE FILTER DROPDOWN ---------------- */
-
+/* ──────────────────── SOURCE FILTER DROPDOWN ──────────────────── */
 const SOURCE_OPTIONS: { value: SourceFilter; label: string }[] = [
   { value: "all",      label: "All Sources" },
   { value: "eporner",  label: "Eporner" },
@@ -204,12 +173,9 @@ const SourceDropdown: FC<{
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: globalThis.MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -223,7 +189,6 @@ const SourceDropdown: FC<{
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 px-4 py-2 bg-surface/60 backdrop-blur border border-border-subtle rounded-xl text-sm font-medium hover:border-primary/50 transition-colors"
       >
-        {/* Colour dot */}
         <span
           className={`w-2 h-2 rounded-full flex-shrink-0 ${
             value === "eporner"
@@ -273,8 +238,17 @@ const SourceDropdown: FC<{
   );
 };
 
-/* ---------------- VIDEO FEED ---------------- */
+/* ──────────────────── DEBOUNCE ──────────────────── */
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState<T>(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
 
+/* ──────────────────── VIDEO FEED ──────────────────── */
 export default function VideoFeed({
   creators,
   selectedCreatorId,
@@ -289,25 +263,28 @@ export default function VideoFeed({
 }: VideoFeedProps) {
   const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
-  // Source filter — "all" | "eporner" | "hqporner"
-  // Changing this resets and reloads the feed via the unified reset effect below.
+  const debouncedSearch                 = useDebounce(searchQuery, 500);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [feedVideos,   setFeedVideos]   = useState<Video[]>([]);
+  const [top10Videos,  setTop10Videos]  = useState<Video[]>([]);
+  const [activeVideo,  setActiveVideo]  = useState<Video | null>(null);
+  const [loading,      setLoading]      = useState(false);
+  const [hasMore,      setHasMore]      = useState(true);
 
-  const pageRef = useRef(1);
-  const [feedVideos, setFeedVideos] = useState<Video[]>([]);
-  const [top10Videos, setTop10Videos] = useState<Video[]>([]);
-  const [activeVideo, setActiveVideo] = useState<Video | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-
-  const loadingRef = useRef(false);
-  const hasMoreRef = useRef(true);
-  const fetchGenRef = useRef(0);
+  const pageRef            = useRef(1);
+  const loadingRef         = useRef(false);
+  const hasMoreRef         = useRef(true);
+  const fetchGenRef        = useRef(0);
   const initialLoadDoneRef = useRef(false);
-  const observerTarget = useRef<HTMLDivElement>(null);
+  const sourceFilterRef    = useRef<SourceFilter>("all");
+  const debouncedSearchRef = useRef("");
+  const observerTarget     = useRef<HTMLDivElement>(null);
 
-  /* ---------- CREATOR MAP ---------- */
+  // Keep refs in sync so infinite-scroll callback always reads current values
+  sourceFilterRef.current    = sourceFilter;
+  debouncedSearchRef.current = debouncedSearch;
 
+  /* ──── CREATOR MAP ──── */
   const creatorMap = useMemo(() => {
     const map: Record<string, Creator> = {};
     if (!Array.isArray(creators)) return map;
@@ -315,52 +292,53 @@ export default function VideoFeed({
     return map;
   }, [creators]);
 
-  /* ---------- TOP 10 ---------- */
-
+  /* ──── TOP 10 ──── */
   useEffect(() => {
-    const fetchTop10 = async () => {
+    (async () => {
       try {
-        const res = await axios.get(`${API_BASE}/videos/top10`);
+        const res  = await axios.get(`${API_BASE}/videos/top10`);
         const data: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
         setTop10Videos(data);
       } catch (err) {
         console.error("Top10 fetch error:", err);
       }
-    };
-    fetchTop10();
+    })();
   }, [API_BASE]);
 
-  /* ---------- BUILD URL HELPER ---------- */
+  /* ──── BUILD URL ────
+   * KEY FIX: source filter is ALWAYS appended, even during search.
+   * Previously the search branch returned early without &source=,
+   * so the sort dropdown had zero effect on search results.
+   */
+  const buildUrl = useCallback((page: number) => {
+    const search = debouncedSearchRef.current;
+    const source = sourceFilterRef.current;
 
-  const buildUrl = useCallback(
-    (page: number) => {
-      // Search always uses eporner API regardless of sourceFilter
-      if (searchQuery?.trim()) {
-        return `${API_BASE}/videos?page=${page}&limit=20&search=${encodeURIComponent(searchQuery)}`;
-      }
-      const sourceParam = sourceFilter !== "all" ? `&source=${sourceFilter}` : "";
-      return `${API_BASE}/videos?page=${page}&limit=20${sourceParam}`;
-    },
-    [searchQuery, sourceFilter, API_BASE],
-  );
+    // source param — included in BOTH search and feed modes
+    const sourceParam = source !== "all" ? `&source=${source}` : "";
 
-  /* ---------- LOAD VIDEOS (infinite scroll pages 2+) ---------- */
+    if (search.trim()) {
+      return (
+        `${API_BASE}/videos?page=${page}&limit=20` +
+        `&search=${encodeURIComponent(search)}` +
+        sourceParam   // ← this was missing before
+      );
+    }
 
-  const loadVideos = useCallback(async () => {
-    if (loadingRef.current || !hasMoreRef.current) return;
+    return `${API_BASE}/videos?page=${page}&limit=20${sourceParam}`;
+  }, [API_BASE]);
 
+  /* ──── FETCH ONE PAGE ──── */
+  const fetchPage = useCallback(async (page: number, gen: number) => {
+    if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
 
-    const myGen = fetchGenRef.current;
-    const currentPage = pageRef.current;
-
     try {
-      const res = await axios.get(buildUrl(currentPage), {
+      const res = await axios.get(buildUrl(page), {
         headers: { "Cache-Control": "no-cache" },
       });
-
-      if (myGen !== fetchGenRef.current) return;
+      if (gen !== fetchGenRef.current) return;
 
       const newVideos: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
 
@@ -368,107 +346,80 @@ export default function VideoFeed({
         hasMoreRef.current = false;
         setHasMore(false);
       } else {
-        setFeedVideos((prev) => [...prev, ...newVideos]);
-        pageRef.current = currentPage + 1;
+        if (page === 1) {
+          setFeedVideos(newVideos);
+        } else {
+          setFeedVideos((prev) => [...prev, ...newVideos]);
+        }
+        pageRef.current            = page + 1;
         initialLoadDoneRef.current = true;
         onVideosSeen?.(newVideos);
       }
     } catch (err) {
-      console.error("Video load error:", err);
+      console.error("Video fetch error:", err);
     } finally {
-      if (myGen === fetchGenRef.current) {
+      if (gen === fetchGenRef.current) {
         loadingRef.current = false;
         setLoading(false);
       }
     }
   }, [buildUrl, onVideosSeen]);
 
-  /* ---------- RESET + INITIAL LOAD ----------
-   * Runs when searchQuery OR sourceFilter changes.
-   * Both trigger a full feed reset and re-fetch from page 1.
+  /* ──── RESET + INITIAL LOAD ────
+   * Direct deps on debouncedSearch AND sourceFilter so both
+   * trigger a clean reset+refetch correctly.
    */
-
   useEffect(() => {
-    fetchGenRef.current += 1;
-    pageRef.current = 1;
-    hasMoreRef.current = true;
-    loadingRef.current = false;
+    const gen = ++fetchGenRef.current;
+    pageRef.current            = 1;
+    hasMoreRef.current         = true;
+    loadingRef.current         = false;
     initialLoadDoneRef.current = false;
-
     setFeedVideos([]);
     setHasMore(true);
     setLoading(false);
+    fetchPage(1, gen);
+  }, [debouncedSearch, sourceFilter, fetchPage]);
 
-    const myGen = fetchGenRef.current;
-
-    const fetchFirstPage = async () => {
-      loadingRef.current = true;
-      setLoading(true);
-
-      try {
-        const res = await axios.get(buildUrl(1), {
-          headers: { "Cache-Control": "no-cache" },
-        });
-
-        if (myGen !== fetchGenRef.current) return;
-
-        const newVideos: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
-
-        if (newVideos.length === 0) {
-          hasMoreRef.current = false;
-          setHasMore(false);
-        } else {
-          setFeedVideos(newVideos);
-          pageRef.current = 2;
-          initialLoadDoneRef.current = true;
-          onVideosSeen?.(newVideos);
-        }
-      } catch (err) {
-        console.error("Video load error:", err);
-      } finally {
-        if (myGen === fetchGenRef.current) {
-          loadingRef.current = false;
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchFirstPage();
-  // buildUrl captures both searchQuery and sourceFilter, so this effect
-  // correctly re-runs whenever either one changes.
-  }, [buildUrl]);
-
-  /* ---------- INFINITE SCROLL ---------- */
+  /* ──── INFINITE SCROLL ──── */
+  const loadMore = useCallback(() => {
+    if (loadingRef.current || !hasMoreRef.current || !initialLoadDoneRef.current) return;
+    fetchPage(pageRef.current, fetchGenRef.current);
+  }, [fetchPage]);
 
   useEffect(() => {
     const target = observerTarget.current;
     if (!target) return;
-
     const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && initialLoadDoneRef.current) {
-          loadVideos();
-        }
-      },
+      (entries) => { if (entries[0].isIntersecting) loadMore(); },
       { rootMargin: "300px" },
     );
-
     observer.observe(target);
     return () => observer.disconnect();
-  }, [loadVideos]);
+  }, [loadMore]);
 
-  /* ---------- UI ---------- */
+  /* ──── HEADING ──── */
+  const headingTitle = debouncedSearch.trim()
+    ? `Results for "${debouncedSearch}"${
+        sourceFilter !== "all"
+          ? ` · ${sourceFilter === "eporner" ? "Eporner" : "HQ Porner"}`
+          : ""
+      }`
+    : sourceFilter === "eporner"
+    ? "Eporner Videos"
+    : sourceFilter === "hqporner"
+    ? "HQ Porner Videos"
+    : "All Videos";
 
+  /* ──── RENDER ──── */
   return (
     <div className="flex flex-col lg:flex-row gap-8 items-start">
       {/* SIDEBAR — Top 10 */}
       <div className="w-full lg:w-1/4 xl:w-1/5">
         <h2 className="text-2xl font-bold mb-6">Top 10 Videos</h2>
-
         {top10Videos.length === 0 && loading && (
           <p className="text-sm text-content-muted animate-pulse">Loading…</p>
         )}
-
         <div className="space-y-4">
           {top10Videos.map((video, index) => {
             const creator = creatorMap[video.creatorId];
@@ -481,7 +432,6 @@ export default function VideoFeed({
                 <span className="text-2xl font-black text-content-muted/30 w-6 flex-shrink-0 leading-none mt-1 group-hover/top:text-primary transition-colors">
                   {index + 1}
                 </span>
-
                 <div className="relative flex-shrink-0">
                   <img
                     src={video.thumbnail}
@@ -498,7 +448,6 @@ export default function VideoFeed({
                     </div>
                   )}
                 </div>
-
                 <div className="min-w-0">
                   <h4 className="text-sm font-semibold line-clamp-2 group-hover/top:text-primary transition-colors">
                     {video.title}
@@ -523,26 +472,24 @@ export default function VideoFeed({
             >
               <ArrowLeft className="w-4 h-4" /> Back to Feed
             </button>
-
             <VideoPlayer
               src={activeVideo.url}
               type={activeVideo.type}
               title={activeVideo.title}
+              videoId={activeVideo.id}
             />
           </>
         ) : (
           <>
-            {/* FEED HEADER — filter dropdown */}
+            {/* FEED HEADER — source dropdown always visible */}
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">
-                {sourceFilter === "all"
-                  ? "All Videos"
-                  : sourceFilter === "eporner"
-                  ? "Eporner Videos"
-                  : "HQ Porner Videos"}
-              </h2>
+              <h2 className="text-2xl font-bold">{headingTitle}</h2>
               <SourceDropdown value={sourceFilter} onChange={setSourceFilter} />
             </div>
+
+            {searchQuery.trim() !== debouncedSearch.trim() && (
+              <p className="text-sm text-content-muted mb-4 animate-pulse">Searching…</p>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
               {feedVideos.map((video) => {

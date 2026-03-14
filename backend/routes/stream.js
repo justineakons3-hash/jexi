@@ -1,11 +1,16 @@
 /**
  * routes/stream.js
  *
- * GET /api/stream?url=<encoded-cdn-url>
+ * GET /api/stream?url=<encoded-cdn-url>&ref=<encoded-hqporner-page-url>
  *
- * Proxies bigcdn.cc MP4 streams through your server so the browser
- * never contacts bigcdn.cc directly. This bypasses hotlink protection
- * because we forward Referer: https://hqporner.com/ on every request.
+ * Proxies bigcdn.cc MP4 streams through the server so the browser
+ * never contacts bigcdn.cc directly.
+ *
+ * KEY FIX: bigcdn.cc hotlink protection checks the exact HQPorner video
+ * page URL as the Referer (e.g. https://hqporner.com/hdporn/123-title.html),
+ * NOT just the homepage. The `ref` query param carries this exact URL so
+ * every request uses the correct Referer — this is why half the videos
+ * were failing before (they were getting Referer: https://hqporner.com/).
  *
  * Supports Range requests (seek / partial content) — required for
  * HTML5 <video> to work correctly.
@@ -18,8 +23,11 @@ const router  = express.Router();
 const ALLOWED_HOST = /bigcdn\.cc/i;
 const TIMEOUT_MS   = 20000;
 
+// Fallback referer if no `ref` param supplied (e.g. old cached URLs)
+const DEFAULT_REFERER = "https://hqporner.com/";
+
 router.get("/", async (req, res) => {
-  const { url } = req.query;
+  const { url, ref } = req.query;
 
   // ── validation ────────────────────────────────────────────────
   if (!url) {
@@ -37,13 +45,32 @@ router.get("/", async (req, res) => {
     return res.status(403).json({ error: "Only bigcdn.cc URLs are allowed" });
   }
 
-  // ── forward Range header if browser sent one (seek support) ───
+  // ── decode the page referer ───────────────────────────────────
+  // Use the exact HQPorner video page URL supplied by resolve.js.
+  // This is what bigcdn.cc checks for hotlink protection.
+  let referer = DEFAULT_REFERER;
+  if (ref) {
+    try {
+      const decoded = decodeURIComponent(ref);
+      // Only accept hqporner.com URLs as referer (safety check)
+      if (decoded.includes("hqporner.com")) {
+        referer = decoded;
+      }
+    } catch {
+      // malformed ref — fall back to default
+    }
+  }
+
+  // ── build upstream headers ────────────────────────────────────
   const upstreamHeaders = {
     "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Referer":         "https://hqporner.com/",
+    "Referer":         referer,   // ← exact video page URL, not just homepage
     "Origin":          "https://hqporner.com",
     "Accept":          "*/*",
     "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest":  "video",
+    "Sec-Fetch-Mode":  "no-cors",
+    "Sec-Fetch-Site":  "cross-site",
   };
 
   if (req.headers.range) {
@@ -52,15 +79,20 @@ router.get("/", async (req, res) => {
 
   try {
     const upstream = await axios.get(parsed.href, {
-      headers:      upstreamHeaders,
-      responseType: "stream",
-      timeout:      TIMEOUT_MS,
-      maxRedirects: 5,
-      decompress:   false, // don't decompress — pass bytes straight through
+      headers:        upstreamHeaders,
+      responseType:   "stream",
+      timeout:        TIMEOUT_MS,
+      maxRedirects:   5,
+      decompress:     false,
       validateStatus: (s) => s < 500,
     });
 
-    // ── relay status + relevant headers ───────────────────────
+    // Log if CDN rejected the request so we can diagnose
+    if (upstream.status === 403 || upstream.status === 401) {
+      console.warn(`[stream] CDN rejected with ${upstream.status} for ref: ${referer}`);
+    }
+
+    // ── relay status + relevant headers ──────────────────────
     const relay = [
       "content-type",
       "content-length",
@@ -75,14 +107,10 @@ router.get("/", async (req, res) => {
       if (upstream.headers[h]) res.setHeader(h, upstream.headers[h]);
     }
 
-    // Always allow range requests
-    res.setHeader("accept-ranges", "bytes");
-
-    // Allow the browser to use this response
+    res.setHeader("accept-ranges",               "bytes");
     res.setHeader("Access-Control-Allow-Origin", "*");
 
     upstream.data.pipe(res);
-
     req.on("close", () => upstream.data.destroy());
 
   } catch (err) {

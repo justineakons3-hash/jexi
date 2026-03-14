@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, Rewind, FastForward, Loader2, ExternalLink } from 'lucide-react';
+import {
+  Play, Pause, Volume2, VolumeX,
+  Maximize, Minimize, Settings,
+  Rewind, FastForward, Loader2, ExternalLink,
+} from 'lucide-react';
 import { LOADING_GIF_PATH } from '../constants';
 import axios from 'axios';
 
@@ -10,28 +14,43 @@ interface VideoPlayerProps {
   videoId?: string;
 }
 
-type QualityMap = Record<string, string>; // { "360": url, "720": url, "1080": url, ... }
+type QualityMap = Record<string, string>; // { "360": url, "720": url, … }
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
 /* ─────────────────────────────────────────────────────────────
-   HQPORNER RESOLVER
+   HQPORNER PLAYER
+   Resolves the CDN URL on demand via POST /api/videos/resolve.
+   BUG FIX: removed `window.open(fallback)` auto-redirect.
+   Now stores fallbackUrl in state and shows a manual button.
 ───────────────────────────────────────────────────────────── */
-
-function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; videoId?: string }) {
+function HQPornerPlayer({
+  src,
+  title,
+  videoId,
+}: {
+  src: string;
+  title: string;
+  videoId?: string;
+}) {
   type State = "idle" | "loading" | "playing" | "error";
 
-  const [state, setState]           = useState<State>("idle");
-  const [cdnUrl, setCdnUrl]         = useState<string>("");
-  const [qualityMap, setQualityMap] = useState<QualityMap>({});
-  const [errMsg, setErrMsg]         = useState<string>("");
+  const [state, setState]             = useState<State>("idle");
+  const [cdnUrl, setCdnUrl]           = useState<string>("");
+  const [qualityMap, setQualityMap]   = useState<QualityMap>({});
+  const [errMsg, setErrMsg]           = useState<string>("");
+  const [fallbackUrl, setFallbackUrl] = useState<string>("");   // ← NEW
 
   const handlePlay = async () => {
     setState("loading");
     setErrMsg("");
+    setFallbackUrl("");
 
     try {
-      const res = await axios.post(`${API_BASE}/videos/resolve`, { pageUrl: src, videoId });
+      const res = await axios.post(`${API_BASE}/videos/resolve`, {
+        pageUrl: src,
+        videoId,
+      });
 
       const url = res.data?.cdnUrl;
       if (!url) throw new Error("No CDN URL returned");
@@ -40,10 +59,14 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
       setCdnUrl(url);
       setState("playing");
     } catch (err: any) {
-      const fallback = err?.response?.data?.fallbackUrl;
-      setErrMsg(fallback ? "" : (err?.response?.data?.error || "Could not load video"));
+      const fallback = err?.response?.data?.fallbackUrl || src;
+      const message  =
+        err?.response?.data?.error || "Could not load video stream.";
+
+      setErrMsg(message);
+      setFallbackUrl(fallback);   // store for the manual button
       setState("error");
-      if (fallback) window.open(fallback, "_blank");
+      // ← REMOVED: window.open(fallback, "_blank") — this was causing the redirect
     }
   };
 
@@ -54,6 +77,7 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
   return (
     <div className="w-full aspect-video bg-black rounded-2xl overflow-hidden flex flex-col items-center justify-center gap-4 border border-border-subtle relative">
       <div className="absolute inset-0 bg-gradient-to-b from-black/60 to-black/90" />
+
       <div className="relative z-10 flex flex-col items-center gap-4 px-6 text-center">
         {state === "idle" && (
           <>
@@ -67,6 +91,7 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
             <p className="text-white/30 text-xs">May take 10–15 seconds</p>
           </>
         )}
+
         {state === "loading" && (
           <>
             <Loader2 className="w-14 h-14 text-primary animate-spin" />
@@ -74,17 +99,29 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
             <p className="text-white/40 text-xs">This takes 10–15 seconds</p>
           </>
         )}
+
         {state === "error" && (
           <>
-            <p className="text-rose-400 font-semibold">{errMsg || "Could not load stream"}</p>
-            <div className="flex gap-3">
-              <button onClick={handlePlay} className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:opacity-90 transition">
+            <p className="text-rose-400 font-semibold text-sm px-4">{errMsg}</p>
+            <div className="flex flex-wrap justify-center gap-3 mt-1">
+              <button
+                onClick={handlePlay}
+                className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:opacity-90 transition"
+              >
                 Try again
               </button>
-              <a href={src} target="_blank" rel="noopener noreferrer"
-                className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1">
-                <ExternalLink className="w-4 h-4" /> Watch on HQPorner
-              </a>
+              {/* Manual external link — user chooses to open it */}
+              {fallbackUrl && (
+                <a
+                  href={fallbackUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Watch on HQPorner
+                </a>
+              )}
             </div>
           </>
         )}
@@ -94,30 +131,37 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
 }
 
 /* ─────────────────────────────────────────────────────────────
-   NATIVE VIDEO PLAYER
+   NATIVE VIDEO PLAYER  (used for HQPorner CDN streams + mp4)
 ───────────────────────────────────────────────────────────── */
-
-function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: string; qualityMap?: QualityMap }) {
+function NativePlayer({
+  src,
+  title,
+  qualityMap = {},
+}: {
+  src: string;
+  title: string;
+  qualityMap?: QualityMap;
+}) {
   const videoRef     = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Available quality labels sorted best-first: ["2160","1080","720","360"]
-  const availableQualities = Object.keys(qualityMap).sort((a, b) => parseInt(b) - parseInt(a));
+  const availableQualities = Object.keys(qualityMap).sort(
+    (a, b) => parseInt(b) - parseInt(a)
+  );
   const hasQualities = availableQualities.length > 0;
 
-  // Current quality label — default to highest available or "auto"
-  const [quality, setQuality]             = useState<string>(availableQualities[0] || "auto");
-  const [activeSrc, setActiveSrc]         = useState<string>(src);
-  const [showSettings, setShowSettings]   = useState(false);
+  const [quality, setQuality]           = useState<string>(availableQualities[0] || "auto");
+  const [activeSrc, setActiveSrc]       = useState<string>(src);
+  const [showSettings, setShowSettings] = useState(false);
 
-  const [isPlaying, setIsPlaying]         = useState(false);
-  const [volume, setVolume]               = useState(1);
-  const [isMuted, setIsMuted]             = useState(false);
-  const [progress, setProgress]           = useState(0);
-  const [duration, setDuration]           = useState(0);
-  const [isFullscreen, setIsFullscreen]   = useState(false);
-  const [showControls, setShowControls]   = useState(true);
-  const [isBuffering, setIsBuffering]     = useState(false);
+  const [isPlaying, setIsPlaying]       = useState(false);
+  const [volume, setVolume]             = useState(1);
+  const [isMuted, setIsMuted]           = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [duration, setDuration]         = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const [isBuffering, setIsBuffering]   = useState(false);
 
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTapTimeRef     = useRef<number>(0);
@@ -128,26 +172,19 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
     videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
   }, []);
 
-  // Switch quality: save current time, swap src, restore time after load
   const switchQuality = (q: string) => {
     const newUrl = qualityMap[q];
     if (!newUrl || newUrl === activeSrc) { setShowSettings(false); return; }
-
     if (videoRef.current) savedTimeRef.current = videoRef.current.currentTime;
     setQuality(q);
     setActiveSrc(newUrl);
     setShowSettings(false);
   };
 
-  // After src swap, restore playback position
   useEffect(() => {
     const v = videoRef.current;
     if (!v || savedTimeRef.current === 0) return;
-
-    const onLoaded = () => {
-      v.currentTime = savedTimeRef.current;
-      v.play().catch(() => {});
-    };
+    const onLoaded = () => { v.currentTime = savedTimeRef.current; v.play().catch(() => {}); };
     v.addEventListener("loadedmetadata", onLoaded, { once: true });
     return () => v.removeEventListener("loadedmetadata", onLoaded);
   }, [activeSrc]);
@@ -181,7 +218,8 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
     const now = Date.now();
     if (now - lastTapTimeRef.current < 300 && videoRef.current && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      videoRef.current.currentTime += e.touches[0].clientX - rect.left > rect.width / 2 ? 5 : -5;
+      videoRef.current.currentTime +=
+        e.touches[0].clientX - rect.left > rect.width / 2 ? 5 : -5;
       lastTapTimeRef.current = 0;
     } else {
       lastTapTimeRef.current = now;
@@ -191,7 +229,8 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value);
     setProgress(v);
-    if (videoRef.current) videoRef.current.currentTime = (v / 100) * videoRef.current.duration;
+    if (videoRef.current)
+      videoRef.current.currentTime = (v / 100) * videoRef.current.duration;
   };
 
   const toggleMute = () => {
@@ -203,7 +242,11 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value);
     setVolume(v);
-    if (videoRef.current) { videoRef.current.volume = v; videoRef.current.muted = v === 0; setIsMuted(v === 0); }
+    if (videoRef.current) {
+      videoRef.current.volume = v;
+      videoRef.current.muted  = v === 0;
+      setIsMuted(v === 0);
+    }
   };
 
   const toggleFullscreen = async () => {
@@ -227,7 +270,9 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
     <div
       ref={containerRef}
       className={`w-full bg-black relative group ${
-        isFullscreen ? "h-screen rounded-none" : "aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
+        isFullscreen
+          ? "h-screen rounded-none"
+          : "aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
       }`}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
@@ -238,59 +283,104 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
         className="w-full h-full object-contain"
         onTimeUpdate={() => {
           if (videoRef.current)
-            setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
+            setProgress(
+              (videoRef.current.currentTime / videoRef.current.duration) * 100
+            );
         }}
-        onLoadedMetadata={() => { if (videoRef.current) setDuration(videoRef.current.duration); }}
+        onLoadedMetadata={() => {
+          if (videoRef.current) setDuration(videoRef.current.duration);
+        }}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => setIsBuffering(false)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
-        onClick={() => window.matchMedia("(pointer: coarse)").matches ? setShowControls(v => !v) : togglePlay()}
+        onClick={() =>
+          window.matchMedia("(pointer: coarse)").matches
+            ? setShowControls((v) => !v)
+            : togglePlay()
+        }
         onTouchStart={handleTouchStart}
         onDoubleClick={(e) => {
           if (!videoRef.current || !containerRef.current) return;
           const rect = containerRef.current.getBoundingClientRect();
-          videoRef.current.currentTime += e.clientX - rect.left > rect.width / 2 ? 5 : -5;
+          videoRef.current.currentTime +=
+            e.clientX - rect.left > rect.width / 2 ? 5 : -5;
         }}
         autoPlay
       />
 
       {isBuffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10">
-          <img src={LOADING_GIF_PATH} alt="Buffering" className="w-16 h-16 object-contain" referrerPolicy="no-referrer" />
+          <img
+            src={LOADING_GIF_PATH}
+            alt="Buffering"
+            className="w-16 h-16 object-contain"
+            referrerPolicy="no-referrer"
+          />
         </div>
       )}
 
       {/* Controls */}
-      <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-16 pb-4 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0"}`}>
+      <div
+        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-16 pb-4 transition-opacity duration-300 ${
+          showControls ? "opacity-100" : "opacity-0"
+        }`}
+      >
         {/* Progress bar */}
         <div className="mb-4">
           <input
-            type="range" min="0" max="100" value={progress}
-            onChange={handleSeek} onClick={e => e.stopPropagation()}
+            type="range"
+            min="0"
+            max="100"
+            value={progress}
+            onChange={handleSeek}
+            onClick={(e) => e.stopPropagation()}
             className="w-full h-1 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
-            style={{ background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)` }}
+            style={{
+              background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)`,
+            }}
           />
         </div>
 
         <div className="flex items-center justify-between">
           {/* Left controls */}
           <div className="flex items-center gap-4">
-            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 5; }} className="text-white hover:text-primary transition-colors"><Rewind className="w-5 h-5" /></button>
+            <button
+              onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 5; }}
+              className="text-white hover:text-primary transition-colors"
+            >
+              <Rewind className="w-5 h-5" />
+            </button>
             <button onClick={togglePlay} className="text-white hover:text-primary transition-colors">
               {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
             </button>
-            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime += 5; }} className="text-white hover:text-primary transition-colors"><FastForward className="w-5 h-5" /></button>
+            <button
+              onClick={() => { if (videoRef.current) videoRef.current.currentTime += 5; }}
+              className="text-white hover:text-primary transition-colors"
+            >
+              <FastForward className="w-5 h-5" />
+            </button>
 
             <div className="flex items-center gap-2 group/vol">
               <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
-                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                {isMuted || volume === 0 ? (
+                  <VolumeX className="w-5 h-5" />
+                ) : (
+                  <Volume2 className="w-5 h-5" />
+                )}
               </button>
               <input
-                type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
-                onChange={handleVolumeChange} onClick={e => e.stopPropagation()}
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={isMuted ? 0 : volume}
+                onChange={handleVolumeChange}
+                onClick={(e) => e.stopPropagation()}
                 className="w-20 h-1 rounded-full appearance-none cursor-pointer hidden group-hover/vol:block [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                style={{ background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)` }}
+                style={{
+                  background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)`,
+                }}
               />
             </div>
 
@@ -301,11 +391,10 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
 
           {/* Right controls */}
           <div className="flex items-center gap-4 relative">
-            {/* Quality selector — only shown for hqporner videos with a quality map */}
             {hasQualities && (
               <div className="relative">
                 <button
-                  onClick={() => setShowSettings(s => !s)}
+                  onClick={() => setShowSettings((s) => !s)}
                   className="text-white hover:text-primary transition-colors flex items-center gap-1"
                 >
                   <Settings className="w-5 h-5" />
@@ -317,7 +406,7 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
                     <div className="px-3 py-1 text-xs font-semibold text-content-muted uppercase tracking-wider border-b border-border-subtle mb-1">
                       Quality
                     </div>
-                    {availableQualities.map(q => (
+                    {availableQualities.map((q) => (
                       <button
                         key={q}
                         onClick={() => switchQuality(q)}
@@ -333,8 +422,15 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
               </div>
             )}
 
-            <button onClick={toggleFullscreen} className="text-white hover:text-primary transition-colors">
-              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+            <button
+              onClick={toggleFullscreen}
+              className="text-white hover:text-primary transition-colors"
+            >
+              {isFullscreen ? (
+                <Minimize className="w-5 h-5" />
+              ) : (
+                <Maximize className="w-5 h-5" />
+              )}
             </button>
           </div>
         </div>
@@ -346,7 +442,6 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
 /* ─────────────────────────────────────────────────────────────
    MAIN VideoPlayer — routes by type
 ───────────────────────────────────────────────────────────── */
-
 export default function VideoPlayer({ src, type, title, videoId }: VideoPlayerProps) {
   if (type === "hqporner") {
     return <HQPornerPlayer src={src} title={title} videoId={videoId} />;

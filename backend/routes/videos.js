@@ -1,15 +1,12 @@
 const express = require("express");
-const axios = require("axios");
-const Video = require("../models/Videos");
-const auth = require("../middleware/auth");
+const axios   = require("axios");
+const Video   = require("../models/Videos");
+const auth    = require("../middleware/auth");
+const { scrapeHQSearch } = require("../scraper/hqSearch");
 
 const router = express.Router();
 
-/* ------------------------------------------------ */
-/* HELPER: interleave two arrays evenly             */
-/* [a1,a2,a3] + [b1,b2,b3] → [a1,b1,a2,b2,a3,b3] */
-/* ------------------------------------------------ */
-
+/* ── interleave two arrays evenly ── */
 function interleave(a, b) {
   const result = [];
   const len = Math.max(a.length, b.length);
@@ -20,17 +17,12 @@ function interleave(a, b) {
   return result;
 }
 
-/* ------------------------------------------------ */
-/* GET /videos/top10                                */
-/* ------------------------------------------------ */
-
+/* ────────────────────────────────────────────────────────
+   GET /videos/top10
+──────────────────────────────────────────────────────── */
 router.get("/top10", async (req, res) => {
   try {
-    const videos = await Video.find({})
-      .sort({ views: -1 })
-      .limit(10)
-      .lean();
-
+    const videos = await Video.find({}).sort({ views: -1 }).limit(10).lean();
     return res.json({ videos });
   } catch (err) {
     console.error("Top10 route error:", err);
@@ -38,58 +30,93 @@ router.get("/top10", async (req, res) => {
   }
 });
 
-/* ------------------------------------------------ */
-/* GET /videos (Feed + Search)                      */
-/* ------------------------------------------------ */
-
+/* ────────────────────────────────────────────────────────
+   GET /videos  (Feed + Search)
+──────────────────────────────────────────────────────── */
 router.get("/", async (req, res) => {
   try {
-    const page  = parseInt(req.query.page)  || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page   = parseInt(req.query.page)  || 1;
+    const limit  = parseInt(req.query.limit) || 20;
     const search = req.query.search;
-    const source = req.query.source; // "eporner" | "hqporner" | undefined
+    // source filter works in BOTH search mode and feed mode
+    const source = req.query.source; // "eporner" | "hqporner" | undefined = "all"
 
     console.log("Incoming Query:", req.query);
 
-    /* ---------------- SEARCH MODE ---------------- */
-
+    /* ──────────────── SEARCH MODE ────────────────
+     * source filter is now respected:
+     *   source=eporner  → only eporner API results
+     *   source=hqporner → only HQPorner scraped results
+     *   source=all/unset → both, interleaved
+     */
     if (search && search.trim() !== "") {
-      const apiUrl =
+      const wantEporner  = !source || source === "all" || source === "eporner";
+      const wantHQPorner = !source || source === "all" || source === "hqporner";
+
+      // Half limit each when showing both; full limit when showing one source
+      const eLimit = (wantEporner && wantHQPorner) ? Math.ceil(limit / 2) : limit;
+      const hLimit = (wantEporner && wantHQPorner) ? Math.ceil(limit / 2) : limit;
+
+      const epornerUrl =
         `https://www.eporner.com/api/v2/video/search/` +
         `?query=${encodeURIComponent(search)}` +
-        `&per_page=${limit}` +
+        `&per_page=${eLimit}` +
         `&page=${page}` +
         `&thumbsize=big` +
         `&order=latest` +
         `&format=json`;
 
-      const response = await axios.get(apiUrl);
-      const apiVideos = response.data.videos || [];
+      // Run both in parallel; failed source returns empty array
+      const [epornerResult, hqResult] = await Promise.allSettled([
+        wantEporner  ? axios.get(epornerUrl)        : Promise.resolve(null),
+        wantHQPorner ? scrapeHQSearch(search, page) : Promise.resolve([]),
+      ]);
 
-      const videos = apiVideos.map((v) => ({
-        id: v.id,
-        title: v.title,
-        url: v.embed?.iframe || v.embed || v.url,
-        type: "eporner",
-        thumbnail: v.default_thumb?.src || v.thumbs?.[0],
-        duration: v.length_min || "0:00",
-        views: v.views || 0,
-        creatorId: v.pornstars?.[0] || "Eporner",
-      }));
+      /* --- eporner results (existing mapping, untouched) --- */
+      let epornerVideos = [];
+      if (wantEporner && epornerResult.status === "fulfilled" && epornerResult.value) {
+        const apiVideos = epornerResult.value.data?.videos || [];
+        epornerVideos = apiVideos.map((v) => ({
+          id:        v.id,
+          title:     v.title,
+          url:       v.embed?.iframe || v.embed || v.url,
+          type:      "eporner",
+          thumbnail: v.default_thumb?.src || v.thumbs?.[0],
+          duration:  v.length_min || "0:00",
+          views:     v.views || 0,
+          creatorId: v.pornstars?.[0] || "Eporner",
+        }));
+      }
+
+      /* --- HQPorner live-scraped results --- */
+      let hqVideos = [];
+      if (wantHQPorner && hqResult.status === "fulfilled") {
+        hqVideos = hqResult.value || [];
+      }
+
+      /* --- combine --- */
+      const videos =
+        wantEporner && wantHQPorner
+          ? interleave(epornerVideos, hqVideos)
+          : wantEporner
+          ? epornerVideos
+          : hqVideos;
+
+      const eTotal = wantEporner && epornerResult.status === "fulfilled" && epornerResult.value
+        ? epornerResult.value.data?.total_count || epornerVideos.length
+        : 0;
 
       return res.json({
         page,
         limit,
-        total: response.data.total_count || videos.length,
+        total: eTotal + hqVideos.length,
         videos,
       });
     }
 
-    /* ---------------- SOURCE FILTER MODE ----------------
-     * When the user picks a specific source (eporner/hqporner),
-     * query only that type with normal pagination.
+    /* ──────────────── SOURCE FILTER MODE (no search) ────────────────
+     * User picked a specific source — query only that type from DB.
      */
-
     if (source === "eporner" || source === "hqporner") {
       const filter = { type: source };
       if (req.query.creator)  filter.creatorId = req.query.creator;
@@ -102,21 +129,10 @@ router.get("/", async (req, res) => {
         .lean();
 
       const total = await Video.countDocuments(filter);
-
       return res.json({ page, limit, total, videos });
     }
 
-    /* ---------------- NORMAL FEED (mixed/interleaved) ----------------
-     * Problem: videos were scraped in bulk — all eporner first, then all
-     * hqporner (or vice versa). Sorting by createdAt returns them in that
-     * same batch order, so the user sees 200 eporner videos then 267 hqporner.
-     *
-     * Fix: fetch half the page limit from each source separately, then
-     * interleave them (e1, hq1, e2, hq2, ...) before returning.
-     * This is 2 fast indexed queries — safe on Render free tier.
-     * Each source is paginated independently using half-limit offsets.
-     */
-
+    /* ──────────────── NORMAL FEED (mixed / interleaved) ──────────────── */
     const half = Math.ceil(limit / 2);
     const skip = (page - 1) * half;
 
@@ -139,7 +155,6 @@ router.get("/", async (req, res) => {
     ]);
 
     const videos = interleave(epornerVideos, hqpornerVideos);
-
     return res.json({ page, limit, total, videos });
 
   } catch (err) {
@@ -148,10 +163,9 @@ router.get("/", async (req, res) => {
   }
 });
 
-/* ------------------------------------------------ */
-/* GET /videos/:id                                  */
-/* ------------------------------------------------ */
-
+/* ────────────────────────────────────────────────────────
+   GET /videos/:id
+──────────────────────────────────────────────────────── */
 router.get("/:id", async (req, res) => {
   try {
     const video = await Video.findOne({ id: req.params.id });
@@ -162,16 +176,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-/* ------------------------------------------------ */
-/* LIKE / SAVE                                      */
-/* ------------------------------------------------ */
-
-router.post("/:id/like", auth, async (req, res) => {
-  res.json({ message: "Liked" });
-});
-
-router.post("/:id/save", auth, async (req, res) => {
-  res.json({ message: "Saved" });
-});
+router.post("/:id/like", auth, async (_req, res) => res.json({ message: "Liked" }));
+router.post("/:id/save", auth, async (_req, res) => res.json({ message: "Saved" }));
 
 module.exports = router;
