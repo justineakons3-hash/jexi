@@ -22,8 +22,8 @@ export interface VideoFeedProps {
   onSelectCreator: (id: string | null) => void;
   savedVideoIds: string[];
   likedVideoIds: string[];
-  onToggleSave: (id: string) => void;
-  onToggleLike: (id: string) => void;
+  onToggleSave: (id: string, video?: Video) => void;
+  onToggleLike: (id: string, video?: Video) => void;
   searchQuery: string;
   onVideosSeen?: (videos: Video[]) => void;
 }
@@ -31,12 +31,13 @@ export interface VideoFeedProps {
 interface VideoCardProps {
   video: Video;
   creator?: Creator;
+  allCreators?: Creator[];
   onSelectCreator: (id: string | null) => void;
   onClick: () => void;
   isSaved: boolean;
   isLiked: boolean;
-  onToggleSave: (id: string) => void;
-  onToggleLike: (id: string) => void;
+  onToggleSave: (id: string, video?: Video) => void;
+  onToggleLike: (id: string, video?: Video) => void;
 }
 
 type SourceFilter = "all" | "eporner" | "hqporner";
@@ -129,10 +130,11 @@ export const VideoCard: FC<VideoCardProps> = ({
           <div className="flex justify-between mb-2">
             <h3 className="font-semibold text-lg line-clamp-2">{video.title}</h3>
             <div className="flex gap-2">
-              <button onClick={(e) => { e.stopPropagation(); onToggleLike(video.id); }}>
+              {/* Pass full video object so search results get upserted to DB */}
+              <button onClick={(e) => { e.stopPropagation(); onToggleLike(video.id, video); }}>
                 <Heart className={`w-4 h-4 ${isLiked ? "fill-current text-rose-500" : ""}`} />
               </button>
-              <button onClick={(e) => { e.stopPropagation(); onToggleSave(video.id); }}>
+              <button onClick={(e) => { e.stopPropagation(); onToggleSave(video.id, video); }}>
                 <Bookmark className={`w-4 h-4 ${isSaved ? "fill-current text-primary" : ""}`} />
               </button>
             </div>
@@ -248,20 +250,15 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced;
 }
 
-/* ──────────────────────────────────────────────────────────────
-   RELATED VIDEOS
-   Shown below the player. Fetches up to 6 videos (shown as 3)
-   by the same creator first; if fewer than 3 found, fills the
-   rest with a keyword search on the first word of the title.
-────────────────────────────────────────────────────────────── */
+/* ──────────────────── RELATED VIDEOS ──────────────────── */
 interface RelatedVideosProps {
   currentVideo: Video;
   creatorMap: Record<string, Creator>;
   onSelect: (video: Video) => void;
   savedVideoIds: string[];
   likedVideoIds: string[];
-  onToggleSave: (id: string) => void;
-  onToggleLike: (id: string) => void;
+  onToggleSave: (id: string, video?: Video) => void;
+  onToggleLike: (id: string, video?: Video) => void;
   onSelectCreator: (id: string | null) => void;
 }
 
@@ -289,7 +286,6 @@ const RelatedVideos: FC<RelatedVideosProps> = ({
         const seen = new Set<string>([currentVideo.id]);
         let results: Video[] = [];
 
-        /* ── Step 1: same creator from DB ── */
         if (currentVideo.creatorId) {
           const res = await axios.get(
             `${API_BASE}/videos?limit=6&creator=${encodeURIComponent(currentVideo.creatorId)}`
@@ -301,9 +297,7 @@ const RelatedVideos: FC<RelatedVideosProps> = ({
           }
         }
 
-        /* ── Step 2: keyword search fallback ── */
         if (results.length < 3) {
-          // Use the creator name or first meaningful word of the title
           const creatorName = creatorMap[currentVideo.creatorId]?.name;
           const keyword     = creatorName || currentVideo.title.split(" ").slice(0, 2).join(" ");
           const res = await axios.get(
@@ -316,7 +310,6 @@ const RelatedVideos: FC<RelatedVideosProps> = ({
           }
         }
 
-        /* ── Step 3: random recent videos if still not enough ── */
         if (results.length < 3) {
           const res = await axios.get(`${API_BASE}/videos?limit=10&page=1`);
           const vids: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
@@ -344,10 +337,7 @@ const RelatedVideos: FC<RelatedVideosProps> = ({
         <h3 className="text-lg font-bold mb-4 text-content">More like this</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="animate-pulse bg-surface/60 rounded-2xl overflow-hidden border border-border-subtle"
-            >
+            <div key={i} className="animate-pulse bg-surface/60 rounded-2xl overflow-hidden border border-border-subtle">
               <div className="aspect-video bg-white/5" />
               <div className="p-3 space-y-2">
                 <div className="h-3 bg-white/10 rounded w-3/4" />
@@ -366,22 +356,19 @@ const RelatedVideos: FC<RelatedVideosProps> = ({
     <div className="mt-8">
       <h3 className="text-lg font-bold mb-4 text-content">More like this</h3>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {related.map((video) => {
-          const creator = creatorMap[video.creatorId];
-          return (
-            <VideoCard
-              key={video.id}
-              video={video}
-              creator={creator}
-              onSelectCreator={onSelectCreator}
-              onClick={() => onSelect(video)}
-              isSaved={savedVideoIds.includes(video.id)}
-              isLiked={likedVideoIds.includes(video.id)}
-              onToggleSave={onToggleSave}
-              onToggleLike={onToggleLike}
-            />
-          );
-        })}
+        {related.map((video) => (
+          <VideoCard
+            key={video.id}
+            video={video}
+            creator={creatorMap[video.creatorId]}
+            onSelectCreator={onSelectCreator}
+            onClick={() => onSelect(video)}
+            isSaved={savedVideoIds.includes(video.id)}
+            isLiked={likedVideoIds.includes(video.id)}
+            onToggleSave={onToggleSave}
+            onToggleLike={onToggleLike}
+          />
+        ))}
       </div>
     </div>
   );
@@ -422,7 +409,6 @@ export default function VideoFeed({
   sourceFilterRef.current    = sourceFilter;
   debouncedSearchRef.current = debouncedSearch;
 
-  /* ──── CREATOR MAP ──── */
   const creatorMap = useMemo(() => {
     const map: Record<string, Creator> = {};
     if (!Array.isArray(creators)) return map;
@@ -430,11 +416,10 @@ export default function VideoFeed({
     return map;
   }, [creators]);
 
-  /* ──── TOP 10 ──── */
   useEffect(() => {
     (async () => {
       try {
-        const res  = await axios.get(`${API_BASE}/videos/top10`);
+        const res = await axios.get(`${API_BASE}/videos/top10`);
         const data: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
         setTop10Videos(data);
       } catch (err) {
@@ -443,7 +428,6 @@ export default function VideoFeed({
     })();
   }, [API_BASE]);
 
-  /* ──── BUILD URL ──── */
   const buildUrl = useCallback((page: number) => {
     const search = debouncedSearchRef.current;
     const source = sourceFilterRef.current;
@@ -458,7 +442,6 @@ export default function VideoFeed({
     return `${API_BASE}/videos?page=${page}&limit=20${sourceParam}`;
   }, [API_BASE]);
 
-  /* ──── FETCH ONE PAGE ──── */
   const fetchPage = useCallback(async (page: number, gen: number) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -507,7 +490,6 @@ export default function VideoFeed({
     }
   }, [buildUrl, onVideosSeen]);
 
-  /* ──── RESET + INITIAL LOAD ──── */
   useEffect(() => {
     const gen = ++fetchGenRef.current;
     pageRef.current           = 1;
@@ -520,30 +502,23 @@ export default function VideoFeed({
     fetchPage(1, gen);
   }, [debouncedSearch, sourceFilter, fetchPage]);
 
-  /* ──── INTERSECTION OBSERVER ──── */
   useEffect(() => {
     const target = observerTarget.current;
     if (!target) return;
-
     const observer = new IntersectionObserver(
       (entries) => {
         const isIntersecting = entries[0].isIntersecting;
         sentinelInViewRef.current = isIntersecting;
-
         if (isIntersecting && !loadingRef.current && hasMoreRef.current) {
-          if (pageRef.current > 1) {
-            fetchPage(pageRef.current, fetchGenRef.current);
-          }
+          if (pageRef.current > 1) fetchPage(pageRef.current, fetchGenRef.current);
         }
       },
       { rootMargin: "400px" },
     );
-
     observer.observe(target);
     return () => observer.disconnect();
   }, [fetchPage]);
 
-  /* ──── HEADING ──── */
   const headingTitle = debouncedSearch.trim()
     ? `Results for "${debouncedSearch}"${
         sourceFilter !== "all"
@@ -556,7 +531,6 @@ export default function VideoFeed({
     ? "HQ Porner Videos"
     : "All Videos";
 
-  /* ──── RENDER ──── */
   return (
     <div className="flex flex-col lg:flex-row gap-8 items-start">
       {/* SIDEBAR — Top 10 */}
@@ -618,7 +592,6 @@ export default function VideoFeed({
               <ArrowLeft className="w-4 h-4" /> Back to Feed
             </button>
 
-            {/* Player */}
             <VideoPlayer
               src={activeVideo.url}
               type={activeVideo.type}
@@ -626,33 +599,61 @@ export default function VideoFeed({
               videoId={activeVideo.id}
             />
 
-            {/* Title + creator below player */}
-            <div className="mt-4 mb-2">
-              <h2 className="text-xl font-bold text-content line-clamp-2">
-                {activeVideo.title}
-              </h2>
-              {creatorMap[activeVideo.creatorId] && (
-                <div className="flex items-center gap-2 mt-2">
-                  <img
-                    src={creatorMap[activeVideo.creatorId].avatar}
-                    alt={creatorMap[activeVideo.creatorId].name}
-                    className="w-7 h-7 rounded-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <span className="text-sm text-content-muted font-medium">
-                    {creatorMap[activeVideo.creatorId].name}
-                  </span>
-                </div>
-              )}
+            {/* Title + creator + like/save buttons */}
+            <div className="mt-4 mb-2 flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <h2 className="text-xl font-bold text-content line-clamp-2">
+                  {activeVideo.title}
+                </h2>
+                {creatorMap[activeVideo.creatorId] && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <img
+                      src={creatorMap[activeVideo.creatorId].avatar}
+                      alt={creatorMap[activeVideo.creatorId].name}
+                      className="w-7 h-7 rounded-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    <button
+                      onClick={() => onSelectCreator(activeVideo.creatorId)}
+                      className="text-sm text-content-muted font-medium hover:text-primary transition-colors"
+                    >
+                      {creatorMap[activeVideo.creatorId].name}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0 mt-1">
+                <button
+                  onClick={() => onToggleLike(activeVideo.id, activeVideo)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                    likedVideoIds.includes(activeVideo.id)
+                      ? "bg-rose-500/10 border-rose-500/30 text-rose-500"
+                      : "bg-surface/60 border-border-subtle text-content-muted hover:text-rose-500 hover:border-rose-500/30"
+                  }`}
+                >
+                  <Heart className={`w-4 h-4 ${likedVideoIds.includes(activeVideo.id) ? "fill-current" : ""}`} />
+                  {likedVideoIds.includes(activeVideo.id) ? "Liked" : "Like"}
+                </button>
+                <button
+                  onClick={() => onToggleSave(activeVideo.id, activeVideo)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                    savedVideoIds.includes(activeVideo.id)
+                      ? "bg-primary/10 border-primary/30 text-primary"
+                      : "bg-surface/60 border-border-subtle text-content-muted hover:text-primary hover:border-primary/30"
+                  }`}
+                >
+                  <Bookmark className={`w-4 h-4 ${savedVideoIds.includes(activeVideo.id) ? "fill-current" : ""}`} />
+                  {savedVideoIds.includes(activeVideo.id) ? "Saved" : "Save"}
+                </button>
+              </div>
             </div>
 
-            {/* Related videos */}
             <RelatedVideos
               currentVideo={activeVideo}
               creatorMap={creatorMap}
               onSelect={(v) => {
                 setActiveVideo(v);
-                // Scroll back to top of player
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
               savedVideoIds={savedVideoIds}
@@ -674,22 +675,19 @@ export default function VideoFeed({
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
-              {feedVideos.map((video) => {
-                const creator = creatorMap[video.creatorId];
-                return (
-                  <VideoCard
-                    key={video.id}
-                    video={video}
-                    creator={creator}
-                    onSelectCreator={onSelectCreator}
-                    onClick={() => setActiveVideo(video)}
-                    isSaved={savedVideoIds.includes(video.id)}
-                    isLiked={likedVideoIds.includes(video.id)}
-                    onToggleSave={onToggleSave}
-                    onToggleLike={onToggleLike}
-                  />
-                );
-              })}
+              {feedVideos.map((video) => (
+                <VideoCard
+                  key={video.id}
+                  video={video}
+                  creator={creatorMap[video.creatorId]}
+                  onSelectCreator={onSelectCreator}
+                  onClick={() => setActiveVideo(video)}
+                  isSaved={savedVideoIds.includes(video.id)}
+                  isLiked={likedVideoIds.includes(video.id)}
+                  onToggleSave={onToggleSave}
+                  onToggleLike={onToggleLike}
+                />
+              ))}
             </div>
 
             <div ref={observerTarget} className="w-full py-12 flex justify-center">

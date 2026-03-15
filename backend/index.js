@@ -9,7 +9,8 @@ const videoRoutes   = require("./routes/videos");
 const creatorRoutes = require("./routes/creators");
 const authRoutes    = require("./routes/auth");
 const resolveRoute  = require("./routes/resolve");
-const streamRoute   = require("./routes/stream");   // ← NEW
+const streamRoute   = require("./routes/stream");
+const userRoutes    = require("./routes/user");        // ← NEW
 const { runScraper: scrapeVideos } = require("./scraper/scrape");
 
 const app  = express();
@@ -43,11 +44,12 @@ mongoose
 /* ------------------- ROUTES ------------------- */
 
 // Order matters: more-specific paths first
-app.use("/api/stream",         streamRoute);   // ← NEW — CDN proxy
+app.use("/api/stream",         streamRoute);
 app.use("/api/videos/resolve", resolveRoute);
 app.use("/api/videos",         videoRoutes);
 app.use("/api/creators",       creatorRoutes);
 app.use("/api/auth",           authRoutes);
+app.use("/api/user",           userRoutes);            // ← NEW
 
 /* ------------------- SCRAPER CONTROL ------------------- */
 

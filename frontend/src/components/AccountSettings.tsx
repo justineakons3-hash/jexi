@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { User, Bookmark, Heart, Save, Play, X } from "lucide-react";
+import { User, Bookmark, Heart, Save, X, Loader2 } from "lucide-react";
 import { ColorTheme, Video, Creator } from "../types";
 import { VideoCard } from "./VideoFeed";
 import VideoPlayer from "./VideoPlayer";
+import axios from "axios";
 
 interface AccountSettingsProps {
   colorTheme: ColorTheme;
@@ -12,16 +13,17 @@ interface AccountSettingsProps {
   creators: Creator[];
   savedVideoIds: string[];
   likedVideoIds: string[];
-  onToggleSave: (id: string) => void;
-  onToggleLike: (id: string) => void;
+  onToggleSave: (id: string, video?: Video) => void;
+  onToggleLike: (id: string, video?: Video) => void;
   onSelectCreator: (id: string | null) => void;
   setCurrentView: (view: "home" | "manage" | "settings") => void;
 }
 
+const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
+
 export default function AccountSettings({ 
   colorTheme, 
   setColorTheme,
-  videos,
   creators,
   savedVideoIds,
   likedVideoIds,
@@ -35,13 +37,70 @@ export default function AccountSettings({
   const [activeTab, setActiveTab] = useState<"profile" | "saved" | "liked" | "theme">("profile");
   const [activeVideo, setActiveVideo] = useState<Video | null>(null);
 
+  const [savedVideos, setSavedVideos] = useState<Video[]>([]);
+  const [likedVideos, setLikedVideos] = useState<Video[]>([]);
+  const [savedLoading, setSavedLoading] = useState(false);
+  const [likedLoading, setLikedLoading] = useState(false);
+
   const presetColors = [
-    "#ff8397", // Default
-    "#3b82f6", // Blue
-    "#a855f7", // Purple
-    "#10b981", // Emerald
-    "#f59e0b", // Amber
+    "#ff8397",
+    "#3b82f6",
+    "#a855f7",
+    "#10b981",
+    "#f59e0b",
   ];
+
+  // Fetch saved videos when tab opens or savedVideoIds change
+  useEffect(() => {
+    if (activeTab !== "saved") return;
+    if (savedVideoIds.length === 0) { setSavedVideos([]); return; }
+    let cancelled = false;
+    setSavedLoading(true);
+    const fetchAll = async () => {
+      try {
+        const results = await Promise.allSettled(
+          savedVideoIds.map((id) => axios.get(`${API_BASE}/videos/${id}`))
+        );
+        if (cancelled) return;
+        const videos: Video[] = results
+          .filter((r) => r.status === "fulfilled")
+          .map((r) => (r as PromiseFulfilledResult<any>).value.data);
+        setSavedVideos(videos);
+      } catch (err) {
+        console.error("Saved videos fetch error:", err);
+      } finally {
+        if (!cancelled) setSavedLoading(false);
+      }
+    };
+    fetchAll();
+    return () => { cancelled = true; };
+  }, [activeTab, savedVideoIds]);
+
+  // Fetch liked videos when tab opens or likedVideoIds change
+  useEffect(() => {
+    if (activeTab !== "liked") return;
+    if (likedVideoIds.length === 0) { setLikedVideos([]); return; }
+    let cancelled = false;
+    setLikedLoading(true);
+    const fetchAll = async () => {
+      try {
+        const results = await Promise.allSettled(
+          likedVideoIds.map((id) => axios.get(`${API_BASE}/videos/${id}`))
+        );
+        if (cancelled) return;
+        const videos: Video[] = results
+          .filter((r) => r.status === "fulfilled")
+          .map((r) => (r as PromiseFulfilledResult<any>).value.data);
+        setLikedVideos(videos);
+      } catch (err) {
+        console.error("Liked videos fetch error:", err);
+      } finally {
+        if (!cancelled) setLikedLoading(false);
+      }
+    };
+    fetchAll();
+    return () => { cancelled = true; };
+  }, [activeTab, likedVideoIds]);
 
   const handleSave = () => {
     setIsSaved(true);
@@ -49,15 +108,60 @@ export default function AccountSettings({
   };
 
   useEffect(() => {
-    if (activeVideo) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
+    document.body.style.overflow = activeVideo ? 'hidden' : 'unset';
+    return () => { document.body.style.overflow = 'unset'; };
   }, [activeVideo]);
+
+  const VideoGrid = ({
+    videos,
+    loading,
+    emptyIcon,
+    emptyText,
+    isSavedTab,
+  }: {
+    videos: Video[];
+    loading: boolean;
+    emptyIcon: React.ReactNode;
+    emptyText: string;
+    isSavedTab: boolean;
+  }) => {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        </div>
+      );
+    }
+    if (videos.length === 0) {
+      return (
+        <div className="text-center py-12 bg-surface/40 rounded-2xl border border-border-subtle">
+          <div className="w-12 h-12 text-content-muted mx-auto mb-4 opacity-50">{emptyIcon}</div>
+          <p className="text-content-muted">{emptyText}</p>
+        </div>
+      );
+    }
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {videos.map(video => (
+          <VideoCard
+            key={video.id}
+            video={video}
+            creator={creators.find(c => c.id === video.creatorId)}
+            allCreators={creators}
+            onSelectCreator={(id) => {
+              onSelectCreator(id);
+              setCurrentView("home");
+            }}
+            onClick={() => setActiveVideo(video)}
+            isSaved={isSavedTab ? true : savedVideoIds.includes(video.id)}
+            isLiked={isSavedTab ? likedVideoIds.includes(video.id) : true}
+            onToggleSave={onToggleSave}
+            onToggleLike={onToggleLike}
+          />
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
@@ -105,14 +209,12 @@ export default function AccountSettings({
         <div className="md:col-span-2 space-y-8">
           {activeTab === "profile" && (
             <>
-              {/* Profile Section */}
               <motion.div 
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="bg-surface/60 backdrop-blur-xl border border-border-subtle rounded-2xl p-6 shadow-lg"
               >
                 <h3 className="text-xl font-semibold text-content mb-6">Profile Information</h3>
-                
                 <div className="space-y-6">
                   <div className="flex items-center gap-6">
                     <div className="relative">
@@ -131,7 +233,6 @@ export default function AccountSettings({
                       <p className="text-sm text-content-muted mt-1">JPG, GIF or PNG. Max size of 800K</p>
                     </div>
                   </div>
-
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-content">Username</label>
                     <input
@@ -141,7 +242,6 @@ export default function AccountSettings({
                       className="w-full px-4 py-3 bg-background border border-border-subtle rounded-xl text-content focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
                     />
                   </div>
-
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-content">Email Address</label>
                     <input
@@ -153,7 +253,6 @@ export default function AccountSettings({
                   </div>
                 </div>
               </motion.div>
-
               <div className="flex justify-end">
                 <button 
                   onClick={handleSave}
@@ -173,7 +272,6 @@ export default function AccountSettings({
               className="bg-surface/60 backdrop-blur-xl border border-border-subtle rounded-2xl p-6 shadow-lg"
             >
               <h3 className="text-xl font-semibold text-content mb-6">Appearance & Theme</h3>
-              
               <div className="space-y-6">
                 <div>
                   <label className="text-sm font-medium text-content block mb-4">Color Theme</label>
@@ -188,9 +286,7 @@ export default function AccountSettings({
                       />
                       <span className="text-sm text-content font-mono pr-2">{colorTheme.toUpperCase()}</span>
                     </div>
-                    
                     <div className="h-8 w-px bg-border-subtle mx-2"></div>
-                    
                     <div className="flex gap-3">
                       {presetColors.map((color) => (
                         <button
@@ -209,74 +305,28 @@ export default function AccountSettings({
           )}
 
           {activeTab === "saved" && (
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
               <h3 className="text-2xl font-bold text-content mb-6">Saved Videos</h3>
-              {savedVideoIds.length === 0 ? (
-                <div className="text-center py-12 bg-surface/40 rounded-2xl border border-border-subtle">
-                  <Bookmark className="w-12 h-12 text-content-muted mx-auto mb-4 opacity-50" />
-                  <p className="text-content-muted">You haven't saved any videos yet.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {videos.filter(v => savedVideoIds.includes(v.id)).map(video => (
-                    <div key={video.id}>
-                      <VideoCard 
-                        video={video}
-                        creator={creators.find(c => c.id === video.creatorId)}
-                        allCreators={creators}
-                        onSelectCreator={(id) => {
-                          onSelectCreator(id);
-                          setCurrentView("home");
-                        }}
-                        onClick={() => setActiveVideo(video)}
-                        isSaved={true}
-                        isLiked={likedVideoIds.includes(video.id)}
-                        onToggleSave={onToggleSave}
-                        onToggleLike={onToggleLike}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
+              <VideoGrid
+                videos={savedVideos}
+                loading={savedLoading}
+                emptyIcon={<Bookmark className="w-full h-full" />}
+                emptyText="You haven't saved any videos yet."
+                isSavedTab={true}
+              />
             </motion.div>
           )}
 
           {activeTab === "liked" && (
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
               <h3 className="text-2xl font-bold text-content mb-6">Liked Videos</h3>
-              {likedVideoIds.length === 0 ? (
-                <div className="text-center py-12 bg-surface/40 rounded-2xl border border-border-subtle">
-                  <Heart className="w-12 h-12 text-content-muted mx-auto mb-4 opacity-50" />
-                  <p className="text-content-muted">You haven't liked any videos yet.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {videos.filter(v => likedVideoIds.includes(v.id)).map(video => (
-                    <div key={video.id}>
-                      <VideoCard 
-                        video={video}
-                        creator={creators.find(c => c.id === video.creatorId)}
-                        allCreators={creators}
-                        onSelectCreator={(id) => {
-                          onSelectCreator(id);
-                          setCurrentView("home");
-                        }}
-                        onClick={() => setActiveVideo(video)}
-                        isSaved={savedVideoIds.includes(video.id)}
-                        isLiked={true}
-                        onToggleSave={onToggleSave}
-                        onToggleLike={onToggleLike}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
+              <VideoGrid
+                videos={likedVideos}
+                loading={likedLoading}
+                emptyIcon={<Heart className="w-full h-full" />}
+                emptyText="You haven't liked any videos yet."
+                isSavedTab={false}
+              />
             </motion.div>
           )}
         </div>
@@ -289,78 +339,73 @@ export default function AccountSettings({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-4 sm:p-8"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-4 sm:p-6"
             onClick={() => setActiveVideo(null)}
           >
             <motion.div
-              initial={{ scale: 0.9, opacity: 0, y: 40 }}
+              initial={{ scale: 0.95, opacity: 0, y: 30 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 40 }}
+              exit={{ scale: 0.95, opacity: 0, y: 30 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-7xl h-[90vh] sm:h-[85vh] bg-surface/80 backdrop-blur-2xl rounded-[2rem] overflow-hidden shadow-[0_0_100px_rgba(var(--theme-primary),0.2)] border border-white/10 relative flex flex-col"
+              className="relative w-full max-w-5xl bg-surface/90 backdrop-blur-2xl rounded-3xl overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.7)] border border-white/10 flex flex-col"
             >
               <button
                 onClick={() => setActiveVideo(null)}
-                className="absolute top-6 right-6 z-50 p-3 bg-black/40 hover:bg-black/80 backdrop-blur-md rounded-full text-white transition-all hover:scale-110 border border-white/20"
+                className="absolute top-4 right-4 z-50 p-2.5 bg-black/50 hover:bg-black/80 backdrop-blur-md rounded-full text-white transition-all hover:scale-110 border border-white/20"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5" />
               </button>
-              
-              <div className="relative w-full flex-1 min-h-0 bg-black flex items-center justify-center overflow-hidden group">
-                <VideoPlayer src={activeVideo.url} type={activeVideo.type} title={activeVideo.title} />
+
+              <div className="w-full bg-black rounded-t-3xl overflow-hidden">
+                <VideoPlayer
+                  src={activeVideo.url}
+                  type={activeVideo.type}
+                  title={activeVideo.title}
+                  videoId={activeVideo.id}
+                />
               </div>
-              
-              <div className="p-6 sm:p-8 flex items-start justify-between bg-gradient-to-b from-surface/40 to-surface flex-shrink-0 border-t border-white/5">
-                <div>
-                  <motion.h2 
-                    initial={{ opacity: 0, x: -20 }}
+
+              <div className="px-6 py-5 flex items-start justify-between gap-4 bg-surface/80 border-t border-white/5">
+                <div className="flex-1 min-w-0">
+                  <motion.h2
+                    initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.2 }}
-                    className="text-2xl sm:text-3xl font-bold text-content mb-1"
+                    transition={{ delay: 0.15 }}
+                    className="text-lg sm:text-xl font-bold text-content line-clamp-1"
                   >
                     {activeVideo.title}
                   </motion.h2>
                   {activeVideo.views && (
-                    <motion.p 
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.25 }}
-                      className="text-sm font-medium text-content-muted mb-3"
-                    >
-                      {activeVideo.views} views
-                    </motion.p>
+                    <p className="text-xs text-content-muted mt-0.5">{activeVideo.views} views</p>
                   )}
                   {creators.find((c) => c.id === activeVideo.creatorId) && (
-                    <motion.div 
-                      initial={{ opacity: 0, x: -20 }}
+                    <motion.div
+                      initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.3 }}
-                      className="flex items-center gap-3 flex-wrap"
+                      transition={{ delay: 0.2 }}
+                      className="flex items-center gap-2 mt-2 flex-wrap"
                     >
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={creators.find((c) => c.id === activeVideo.creatorId)?.avatar}
-                          alt="Creator"
-                          className="w-10 h-10 rounded-full ring-2 ring-primary/50 object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveVideo(null);
-                            onSelectCreator(activeVideo.creatorId);
-                            setCurrentView("home");
-                          }}
-                          className="text-lg font-medium text-content-muted hover:text-primary hover:underline transition-colors text-left"
-                        >
-                          {creators.find((c) => c.id === activeVideo.creatorId)?.name}
-                        </button>
-                      </div>
-
+                      <img
+                        src={creators.find((c) => c.id === activeVideo.creatorId)?.avatar}
+                        alt="Creator"
+                        className="w-7 h-7 rounded-full ring-2 ring-primary/40 object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveVideo(null);
+                          onSelectCreator(activeVideo.creatorId);
+                          setCurrentView("home");
+                        }}
+                        className="text-sm font-medium text-content-muted hover:text-primary hover:underline transition-colors"
+                      >
+                        {creators.find((c) => c.id === activeVideo.creatorId)?.name}
+                      </button>
                       {activeVideo.collaboratorIds && activeVideo.collaboratorIds.length > 0 && (
-                        <div className="flex items-center gap-2 flex-wrap text-content-muted text-lg">
-                          <span className="opacity-70">with</span>
+                        <div className="flex items-center gap-1.5 flex-wrap text-sm text-content-muted">
+                          <span className="opacity-60">with</span>
                           {activeVideo.collaboratorIds.map((collabId, index) => {
                             const collab = creators.find(c => c.id === collabId);
                             if (!collab) return null;
@@ -387,26 +432,38 @@ export default function AccountSettings({
                   )}
                 </div>
 
-                <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                  <button 
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onToggleLike(activeVideo.id);
+                      onToggleLike(activeVideo.id, activeVideo);
                     }}
-                    className={`p-3 rounded-full transition-colors ${likedVideoIds.includes(activeVideo.id) ? 'text-rose-500 bg-rose-500/10' : 'text-content-muted hover:bg-surface hover:text-rose-500'}`}
-                    title={likedVideoIds.includes(activeVideo.id) ? "Unlike" : "Like"}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
+                      likedVideoIds.includes(activeVideo.id)
+                        ? "bg-rose-500/10 border-rose-500/30 text-rose-500"
+                        : "bg-white/5 border-white/10 text-content-muted hover:text-rose-500 hover:border-rose-500/30 hover:bg-rose-500/5"
+                    }`}
                   >
-                    <Heart className={`w-6 h-6 ${likedVideoIds.includes(activeVideo.id) ? 'fill-current' : ''}`} />
+                    <Heart className={`w-4 h-4 ${likedVideoIds.includes(activeVideo.id) ? "fill-current" : ""}`} />
+                    <span className="hidden sm:inline">
+                      {likedVideoIds.includes(activeVideo.id) ? "Liked" : "Like"}
+                    </span>
                   </button>
-                  <button 
+                  <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onToggleSave(activeVideo.id);
+                      onToggleSave(activeVideo.id, activeVideo);
                     }}
-                    className={`p-3 rounded-full transition-colors ${savedVideoIds.includes(activeVideo.id) ? 'text-primary bg-primary/10' : 'text-content-muted hover:bg-surface hover:text-primary'}`}
-                    title={savedVideoIds.includes(activeVideo.id) ? "Unsave" : "Save"}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
+                      savedVideoIds.includes(activeVideo.id)
+                        ? "bg-primary/10 border-primary/30 text-primary"
+                        : "bg-white/5 border-white/10 text-content-muted hover:text-primary hover:border-primary/30 hover:bg-primary/5"
+                    }`}
                   >
-                    <Bookmark className={`w-6 h-6 ${savedVideoIds.includes(activeVideo.id) ? 'fill-current' : ''}`} />
+                    <Bookmark className={`w-4 h-4 ${savedVideoIds.includes(activeVideo.id) ? "fill-current" : ""}`} />
+                    <span className="hidden sm:inline">
+                      {savedVideoIds.includes(activeVideo.id) ? "Saved" : "Save"}
+                    </span>
                   </button>
                 </div>
               </div>

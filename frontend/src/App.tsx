@@ -26,9 +26,6 @@ export default function App() {
   const [theme, setTheme]           = useState<ThemeMode>("dark");
   const [colorTheme, setColorTheme] = useState<ColorTheme>("#ff8397");
 
-  // `creators` here is the first page fetched on login — used by VideoFeed
-  // for avatar display in video cards and by AccountSettings/CreatorManager.
-  // CreatorsView manages its own full paginated list independently.
   const [creators, setCreators] = useState<Creator[]>(INITIAL_CREATORS);
 
   const [seenVideos, setSeenVideos] = useState<Record<string, Video>>({});
@@ -57,15 +54,21 @@ export default function App() {
 
   useEffect(() => {
     if (!isLoggedIn) return;
-    const fetchCreators = async () => {
-      try {
-        const res = await axios.get(`${API_BASE}/creators?page=1&limit=100`);
-        setCreators(res.data.creators || []);
-      } catch (err) {
-        console.error("Creators fetch error:", err);
-      }
-    };
-    fetchCreators();
+    const token = localStorage.getItem("token");
+    const headers = { Authorization: `Bearer ${token}` };
+
+    axios
+      .get(`${API_BASE}/creators?page=1&limit=100`)
+      .then((res) => setCreators(res.data.creators || []))
+      .catch((err) => console.error("Creators fetch error:", err));
+
+    axios
+      .get(`${API_BASE}/user/interactions`, { headers })
+      .then((res) => {
+        setSavedVideoIds(res.data.savedVideoIds || []);
+        setLikedVideoIds(res.data.likedVideoIds || []);
+      })
+      .catch((err) => console.error("Interactions fetch error:", err));
   }, [isLoggedIn, API_BASE]);
 
   useEffect(() => {
@@ -88,20 +91,62 @@ export default function App() {
     });
   }, []);
 
+  const handleAuthError = (err: unknown) => {
+    if (axios.isAxiosError(err) && err.response?.status === 401) {
+      localStorage.removeItem("token");
+      setIsLoggedIn(false);
+      setShowWelcome(false);
+    }
+  };
+
   const handleLogin           = () => { setIsLoggedIn(true); setShowWelcome(true); };
   const handleWelcomeComplete = () => setShowWelcome(false);
   const handleAddCreator      = (c: Creator) => setCreators((prev) => [...prev, c]);
   const handleAddVideo        = (_v: Video) => {};
 
-  const handleToggleSave = (id: string) =>
+  // video param is optional — passed for search-result videos so they can be
+  // upserted into MongoDB (feed videos are already in the DB from scraping)
+  const handleToggleSave = async (id: string, video?: Video) => {
     setSavedVideoIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_BASE}/user/save/${id}`,
+        { video: video || null },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setSavedVideoIds(res.data.savedVideoIds);
+    } catch (err) {
+      console.error("Save toggle error:", err);
+      handleAuthError(err);
+      setSavedVideoIds((prev) =>
+        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      );
+    }
+  };
 
-  const handleToggleLike = (id: string) =>
+  const handleToggleLike = async (id: string, video?: Video) => {
     setLikedVideoIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_BASE}/user/like/${id}`,
+        { video: video || null },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setLikedVideoIds(res.data.likedVideoIds);
+    } catch (err) {
+      console.error("Like toggle error:", err);
+      handleAuthError(err);
+      setLikedVideoIds((prev) =>
+        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      );
+    }
+  };
 
   const seenVideosList = Object.values(seenVideos);
 
@@ -167,12 +212,11 @@ export default function App() {
                 }}
               />
             ) : currentView === "creators" ? (
-              // CreatorsView fetches its own data — no creators prop needed
               <CreatorsView
                 onSelectCreator={(id) => setSelectedCreatorId(id)}
                 onSearchCreator={(name) => {
-                  setSearchQuery(name); // fills the search bar
-                  setCurrentView("home"); // navigates back to the feed
+                  setSearchQuery(name);
+                  setCurrentView("home");
                 }}
               />
             ) : (
