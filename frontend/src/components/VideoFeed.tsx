@@ -248,6 +248,145 @@ function useDebounce<T>(value: T, delay: number): T {
   return debounced;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   RELATED VIDEOS
+   Shown below the player. Fetches up to 6 videos (shown as 3)
+   by the same creator first; if fewer than 3 found, fills the
+   rest with a keyword search on the first word of the title.
+────────────────────────────────────────────────────────────── */
+interface RelatedVideosProps {
+  currentVideo: Video;
+  creatorMap: Record<string, Creator>;
+  onSelect: (video: Video) => void;
+  savedVideoIds: string[];
+  likedVideoIds: string[];
+  onToggleSave: (id: string) => void;
+  onToggleLike: (id: string) => void;
+  onSelectCreator: (id: string | null) => void;
+}
+
+const RelatedVideos: FC<RelatedVideosProps> = ({
+  currentVideo,
+  creatorMap,
+  onSelect,
+  savedVideoIds,
+  likedVideoIds,
+  onToggleSave,
+  onToggleLike,
+  onSelectCreator,
+}) => {
+  const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
+  const [related, setRelated] = useState<Video[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRelated([]);
+    setLoading(true);
+
+    const fetchRelated = async () => {
+      try {
+        const seen = new Set<string>([currentVideo.id]);
+        let results: Video[] = [];
+
+        /* ── Step 1: same creator from DB ── */
+        if (currentVideo.creatorId) {
+          const res = await axios.get(
+            `${API_BASE}/videos?limit=6&creator=${encodeURIComponent(currentVideo.creatorId)}`
+          );
+          const vids: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
+          for (const v of vids) {
+            if (!seen.has(v.id)) { seen.add(v.id); results.push(v); }
+            if (results.length >= 3) break;
+          }
+        }
+
+        /* ── Step 2: keyword search fallback ── */
+        if (results.length < 3) {
+          // Use the creator name or first meaningful word of the title
+          const creatorName = creatorMap[currentVideo.creatorId]?.name;
+          const keyword     = creatorName || currentVideo.title.split(" ").slice(0, 2).join(" ");
+          const res = await axios.get(
+            `${API_BASE}/videos?limit=10&search=${encodeURIComponent(keyword)}`
+          );
+          const vids: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
+          for (const v of vids) {
+            if (!seen.has(v.id)) { seen.add(v.id); results.push(v); }
+            if (results.length >= 3) break;
+          }
+        }
+
+        /* ── Step 3: random recent videos if still not enough ── */
+        if (results.length < 3) {
+          const res = await axios.get(`${API_BASE}/videos?limit=10&page=1`);
+          const vids: Video[] = Array.isArray(res.data?.videos) ? res.data.videos : [];
+          for (const v of vids) {
+            if (!seen.has(v.id)) { seen.add(v.id); results.push(v); }
+            if (results.length >= 3) break;
+          }
+        }
+
+        if (!cancelled) setRelated(results.slice(0, 3));
+      } catch (err) {
+        console.error("Related videos fetch error:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    fetchRelated();
+    return () => { cancelled = true; };
+  }, [currentVideo.id, currentVideo.creatorId, currentVideo.title, API_BASE, creatorMap]);
+
+  if (loading) {
+    return (
+      <div className="mt-8">
+        <h3 className="text-lg font-bold mb-4 text-content">More like this</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="animate-pulse bg-surface/60 rounded-2xl overflow-hidden border border-border-subtle"
+            >
+              <div className="aspect-video bg-white/5" />
+              <div className="p-3 space-y-2">
+                <div className="h-3 bg-white/10 rounded w-3/4" />
+                <div className="h-3 bg-white/10 rounded w-1/2" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (related.length === 0) return null;
+
+  return (
+    <div className="mt-8">
+      <h3 className="text-lg font-bold mb-4 text-content">More like this</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {related.map((video) => {
+          const creator = creatorMap[video.creatorId];
+          return (
+            <VideoCard
+              key={video.id}
+              video={video}
+              creator={creator}
+              onSelectCreator={onSelectCreator}
+              onClick={() => onSelect(video)}
+              isSaved={savedVideoIds.includes(video.id)}
+              isLiked={likedVideoIds.includes(video.id)}
+              onToggleSave={onToggleSave}
+              onToggleLike={onToggleLike}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 /* ──────────────────── VIDEO FEED ──────────────────── */
 export default function VideoFeed({
   creators,
@@ -278,14 +417,7 @@ export default function VideoFeed({
   const sourceFilterRef    = useRef<SourceFilter>("all");
   const debouncedSearchRef = useRef("");
   const observerTarget     = useRef<HTMLDivElement>(null);
-
-  // ── KEY FIX for infinite scroll ──
-  // Tracks whether the sentinel div is currently inside the viewport.
-  // IntersectionObserver fires ONCE when the element enters view.
-  // If it fires while page 1 is still loading, we return early —
-  // but the observer never fires again. So after page 1 finishes,
-  // we check this ref and immediately load page 2 if still in view.
-  const sentinelInViewRef = useRef(false);
+  const sentinelInViewRef  = useRef(false);
 
   sourceFilterRef.current    = sourceFilter;
   debouncedSearchRef.current = debouncedSearch;
@@ -352,13 +484,7 @@ export default function VideoFeed({
         pageRef.current = page + 1;
         onVideosSeen?.(newVideos);
 
-        // ── INFINITE SCROLL FIX ──
-        // After page 1 loads, if the sentinel is still in the viewport
-        // (common on fast connections / large screens), immediately load
-        // the next page. Without this, the user has to scroll down and
-        // back up to trigger the observer again.
         if (page === 1 && sentinelInViewRef.current && hasMoreRef.current) {
-          // Small delay so the DOM updates first
           setTimeout(() => {
             if (
               gen === fetchGenRef.current &&
@@ -384,21 +510,17 @@ export default function VideoFeed({
   /* ──── RESET + INITIAL LOAD ──── */
   useEffect(() => {
     const gen = ++fetchGenRef.current;
-    pageRef.current         = 1;
-    hasMoreRef.current      = true;
-    loadingRef.current      = false;
-    sentinelInViewRef.current = false; // reset sentinel state on filter change
+    pageRef.current           = 1;
+    hasMoreRef.current        = true;
+    loadingRef.current        = false;
+    sentinelInViewRef.current = false;
     setFeedVideos([]);
     setHasMore(true);
     setLoading(false);
     fetchPage(1, gen);
   }, [debouncedSearch, sourceFilter, fetchPage]);
 
-  /* ──── INTERSECTION OBSERVER ────
-   * Stores current intersection state in sentinelInViewRef so
-   * fetchPage can read it after the initial load finishes.
-   * Also directly triggers loadMore while scrolling normally.
-   */
+  /* ──── INTERSECTION OBSERVER ──── */
   useEffect(() => {
     const target = observerTarget.current;
     if (!target) return;
@@ -409,9 +531,6 @@ export default function VideoFeed({
         sentinelInViewRef.current = isIntersecting;
 
         if (isIntersecting && !loadingRef.current && hasMoreRef.current) {
-          // If still on page 1 (initial load in progress), fetchPage will
-          // handle this via the sentinelInViewRef check above.
-          // For page 2+ (normal scroll), load immediately.
           if (pageRef.current > 1) {
             fetchPage(pageRef.current, fetchGenRef.current);
           }
@@ -498,11 +617,49 @@ export default function VideoFeed({
             >
               <ArrowLeft className="w-4 h-4" /> Back to Feed
             </button>
+
+            {/* Player */}
             <VideoPlayer
               src={activeVideo.url}
               type={activeVideo.type}
               title={activeVideo.title}
               videoId={activeVideo.id}
+            />
+
+            {/* Title + creator below player */}
+            <div className="mt-4 mb-2">
+              <h2 className="text-xl font-bold text-content line-clamp-2">
+                {activeVideo.title}
+              </h2>
+              {creatorMap[activeVideo.creatorId] && (
+                <div className="flex items-center gap-2 mt-2">
+                  <img
+                    src={creatorMap[activeVideo.creatorId].avatar}
+                    alt={creatorMap[activeVideo.creatorId].name}
+                    className="w-7 h-7 rounded-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                  <span className="text-sm text-content-muted font-medium">
+                    {creatorMap[activeVideo.creatorId].name}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Related videos */}
+            <RelatedVideos
+              currentVideo={activeVideo}
+              creatorMap={creatorMap}
+              onSelect={(v) => {
+                setActiveVideo(v);
+                // Scroll back to top of player
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              savedVideoIds={savedVideoIds}
+              likedVideoIds={likedVideoIds}
+              onToggleSave={onToggleSave}
+              onToggleLike={onToggleLike}
+              onSelectCreator={onSelectCreator}
             />
           </>
         ) : (
