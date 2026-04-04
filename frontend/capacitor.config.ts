@@ -3,13 +3,9 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const config: CapacitorConfig = {
   appId: "com.jexi.app",
   appName: "jexi",
-  webDir: "../backend/public", // ← change this line
+  webDir: "../backend/public",
   server: {
-    allowNavigation: ["*.onrender.com"],
-    cleartext: false,
-  },
-  android: {
-    allowMixedContent: false,
+    allowNavigation: ["jexi.onrender.com"],
   },
 };
 
