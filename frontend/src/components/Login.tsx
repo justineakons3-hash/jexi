@@ -8,32 +8,43 @@ interface LoginProps {
   onLogin: () => void;
 }
 
-// Backend API base URL (dev: proxy; prod: env var)
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
+// Special guest credentials that redirect to jexi.com instead of the app
+const GUEST_USER = "jexi";
+const GUEST_PASS = "pass123";
+const GUEST_URL  = "https://jexi.com/";
+
 export default function Login({ onLogin }: LoginProps) {
-  const [email, setEmail] = useState("user@example.com");
-  const [password, setPassword] = useState("password");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    // ── Special shortcut: jexi / pass123 → open jexi.com ──
+    if (username.trim() === GUEST_USER && password === GUEST_PASS) {
+      window.open(GUEST_URL, "_blank", "noopener,noreferrer");
+      return;
+    }
+
     setLoading(true);
     try {
-      // FIX: was `${API_BASE}/api/auth/login` which produced /api/api/auth/login
       const res = await axios.post(`${API_BASE}/auth/login`, {
-        email,
+        email: username,
         password,
       });
+
       if (res.status === 200) {
-        localStorage.setItem("token", res.data.token);
+        // Do NOT persist token — user must log in fresh every session
         onLogin();
       }
     } catch (err) {
       console.error("Login failed:", err);
-      setError("Invalid email or password. Please try again.");
+      setError("Invalid username or password. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -63,19 +74,22 @@ export default function Login({ onLogin }: LoginProps) {
             Jexi
           </h1>
           <p className="text-content-muted text-center mb-8">
-            Welcome back. Please login to continue.
+            Please login to continue.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-content-muted mb-1">
-                Email
+                Username
               </label>
               <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl bg-background border border-border-subtle text-content focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                placeholder="Enter username"
+                autoComplete="off"
+                autoCapitalize="off"
               />
             </div>
             <div>
@@ -87,6 +101,8 @@ export default function Login({ onLogin }: LoginProps) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 py-3 rounded-xl bg-background border border-border-subtle text-content focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+                placeholder="Enter password"
+                autoComplete="current-password"
               />
             </div>
 

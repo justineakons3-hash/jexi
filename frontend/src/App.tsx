@@ -116,13 +116,13 @@ export default function App() {
 
   const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
-  /* ── Auth check ── */
+  /* ── Auth check ── 
+   * Always clear token on app load so login screen is always shown.
+   * User must log in every session.
+   */
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (token) {
-      setIsLoggedIn(true);
-      setShowWelcome(true);
-    }
+    localStorage.removeItem("token");
+    // isLoggedIn stays false → Login screen always shown on startup
   }, []);
 
   /* ── Splash + Boot loader logic ──
