@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">jexi</string>
+    <string name="title_activity_main">jexi</string>
+    <string name="package_name">com.jexi.app</string>
+    <string name="custom_url_scheme">com.jexi.app</string>
+</resources>

@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: var(--theme-primary);
+  --color-primary-hover: var(--theme-primary-hover);
+  --color-primary-light: var(--theme-primary-light);
+  --color-surface: var(--theme-surface);
+  --color-background: var(--theme-background);
+  --color-content: var(--theme-content);
+  --color-content-muted: var(--theme-content-muted);
+  --color-border-subtle: var(--theme-border);
+}
+
+:root {
+  --theme-background: #f8fafc;
+  --theme-surface: #ffffff;
+  --theme-content: #0f172a;
+  --theme-content-muted: #64748b;
+  --theme-border: #e2e8f0;
+
+  /* Default Theme */
+  --theme-primary: #ff8397;
+  --theme-primary-hover: color-mix(in srgb, var(--theme-primary), black 15%);
+  --theme-primary-light: color-mix(in srgb, var(--theme-primary), transparent 90%);
+}
+
+.dark {
+  --theme-background: #0e0e0e;
+  --theme-surface: #1c1c1c;
+  --theme-content: #f8fafc;
+  --theme-content-muted: #94a3b8;
+  --theme-border: #2d2d2d;
+}
+
+body {
+  background-color: var(--theme-background);
+  color: var(--theme-content);
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
+}
+
+/* 3D Utilities */
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+/* Modern Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #000000;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--theme-primary);
+  border-radius: 5px;
+  border: 2px solid #000000;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-primary-hover);
+}
