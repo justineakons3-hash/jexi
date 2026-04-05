@@ -1,6 +1,6 @@
 import { ReactNode, useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Moon, Sun, MonitorPlay, Users, Settings, Palette, User, LogOut, ChevronDown, Search } from "lucide-react";
+import { Moon, Sun, MonitorPlay, Users, Settings, Palette, ChevronDown, Search } from "lucide-react";
 import { ThemeMode, ColorTheme, Creator } from "../types";
 
 interface MainLayoutProps {
@@ -15,7 +15,6 @@ interface MainLayoutProps {
   ) => void;
   setSelectedCreatorId: (id: string | null) => void;
   creators?: Creator[];
-
   searchQuery: string;
   setSearchQuery: (query: string) => void;
 }
@@ -42,31 +41,26 @@ export default function MainLayout({
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
-
       if (currentScrollY < 50) {
         setScrollState("top");
       } else {
         if (currentScrollY > lastScrollY.current + 10) {
           setScrollState("down");
-          setIsProfileOpen(false); // Close dropdown on scroll down
+          setIsProfileOpen(false);
         } else if (currentScrollY < lastScrollY.current - 10) {
           setScrollState("up");
-          setIsProfileOpen(false); // Close dropdown on scroll up
+          setIsProfileOpen(false);
         }
       }
       lastScrollY.current = currentScrollY;
     };
-
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (
-        profileRef.current &&
-        !profileRef.current.contains(event.target as Node)
-      ) {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setIsProfileOpen(false);
       }
     }
@@ -74,12 +68,34 @@ export default function MainLayout({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  /*
+   * When the user types in the search box:
+   *   - Always switch to home view so VideoFeed is visible
+   *   - Scroll to top so they see results from the beginning
+   */
+  const handleSearch = (value: string) => {
+    setSearchQuery(value);
+    if (value.trim()) {
+      setCurrentView("home");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  /* Also navigate on Enter key press */
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && searchQuery.trim()) {
+      setCurrentView("home");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      (e.target as HTMLInputElement).blur(); // dismiss keyboard on mobile
+    }
+  };
+
   const presetColors = [
-    "#ff8397", // Default
-    "#3b82f6", // Blue
-    "#a855f7", // Purple
-    "#10b981", // Emerald
-    "#f59e0b", // Amber
+    "#ff8397",
+    "#3b82f6",
+    "#a855f7",
+    "#10b981",
+    "#f59e0b",
   ];
 
   return (
@@ -91,9 +107,7 @@ export default function MainLayout({
     >
       <header
         className={`sticky top-0 z-40 bg-surface/60 backdrop-blur-2xl border-b border-border-subtle shadow-lg transition-transform duration-300 ${
-          scrollState === "down"
-            ? "-translate-y-full md:translate-y-0"
-            : "translate-y-0"
+          scrollState === "down" ? "-translate-y-full md:translate-y-0" : "translate-y-0"
         }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col">
@@ -103,6 +117,7 @@ export default function MainLayout({
               onClick={() => {
                 setCurrentView("home");
                 setSelectedCreatorId(null);
+                window.scrollTo({ top: 0, behavior: "smooth" });
               }}
             >
               <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/30">
@@ -120,7 +135,6 @@ export default function MainLayout({
               >
                 Categories
               </button>
-
               <button
                 onClick={() => setCurrentView("creators")}
                 className={`text-sm font-medium transition-colors py-2 ${currentView === "creators" ? "text-primary" : "text-content-muted hover:text-content"}`}
@@ -138,7 +152,8 @@ export default function MainLayout({
                   type="text"
                   placeholder="Search videos, creators..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => handleSearch(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
                   className="w-full pl-11 pr-4 py-2.5 bg-background/50 backdrop-blur-md border border-border-subtle rounded-full text-sm text-content focus:outline-none focus:ring-2 focus:ring-primary/50 focus:bg-surface transition-all placeholder-content-muted shadow-inner"
                 />
               </div>
@@ -150,11 +165,7 @@ export default function MainLayout({
                 className="p-2 rounded-full bg-background border border-border-subtle text-content-muted hover:text-content transition-colors"
                 title="Toggle Light/Dark Mode"
               >
-                {theme === "dark" ? (
-                  <Sun className="w-5 h-5" />
-                ) : (
-                  <Moon className="w-5 h-5" />
-                )}
+                {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
 
               <div className="relative" ref={profileRef}>
@@ -168,12 +179,8 @@ export default function MainLayout({
                     className="w-8 h-8 rounded-full object-cover"
                     referrerPolicy="no-referrer"
                   />
-                  <span className="text-sm font-medium text-content hidden sm:block">
-                    Alex
-                  </span>
-                  <ChevronDown
-                    className={`w-4 h-4 text-content-muted transition-transform ${isProfileOpen ? "rotate-180" : ""}`}
-                  />
+                  <span className="text-sm font-medium text-content hidden sm:block">Alex</span>
+                  <ChevronDown className={`w-4 h-4 text-content-muted transition-transform ${isProfileOpen ? "rotate-180" : ""}`} />
                 </button>
 
                 <AnimatePresence>
@@ -187,19 +194,10 @@ export default function MainLayout({
                     >
                       <div className="p-4 border-b border-border-subtle">
                         <div className="flex items-center gap-3">
-                          <img
-                            src="https://picsum.photos/seed/user/100/100"
-                            alt="Profile"
-                            className="w-10 h-10 rounded-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
+                          <img src="https://picsum.photos/seed/user/100/100" alt="Profile" className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
                           <div>
-                            <p className="text-sm font-bold text-content">
-                              Alex Doe
-                            </p>
-                            <p className="text-xs text-content-muted">
-                              alex@Jexi.com
-                            </p>
+                            <p className="text-sm font-bold text-content">Alex Doe</p>
+                            <p className="text-xs text-content-muted">alex@Jexi.com</p>
                           </div>
                         </div>
                       </div>
@@ -207,9 +205,7 @@ export default function MainLayout({
                       <div className="p-4 border-b border-border-subtle">
                         <div className="flex items-center gap-2 mb-3">
                           <Palette className="w-4 h-4 text-content-muted" />
-                          <span className="text-xs font-semibold text-content-muted uppercase tracking-wider">
-                            Color Theme
-                          </span>
+                          <span className="text-xs font-semibold text-content-muted uppercase tracking-wider">Color Theme</span>
                         </div>
                         <div className="flex flex-col gap-3">
                           <div className="flex items-center gap-3">
@@ -220,9 +216,7 @@ export default function MainLayout({
                               className="w-8 h-8 rounded cursor-pointer border-0 p-0 bg-transparent"
                               title="Custom Color"
                             />
-                            <span className="text-sm text-content font-mono">
-                              {colorTheme.toUpperCase()}
-                            </span>
+                            <span className="text-sm text-content font-mono">{colorTheme.toUpperCase()}</span>
                           </div>
                           <div className="flex gap-2">
                             {presetColors.map((color) => (
@@ -240,27 +234,18 @@ export default function MainLayout({
 
                       <div className="p-2">
                         <button
-                          onClick={() => {
-                            setCurrentView("settings");
-                            setIsProfileOpen(false);
-                          }}
+                          onClick={() => { setCurrentView("settings"); setIsProfileOpen(false); }}
                           className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-content-muted hover:text-content hover:bg-background rounded-xl transition-colors"
                         >
-                          <Settings className="w-4 h-4" />
-                          Account Settings
+                          <Settings className="w-4 h-4" /> Account Settings
                         </button>
                         <button
-                          onClick={() => {
-                            setCurrentView("manage");
-                            setIsProfileOpen(false);
-                          }}
+                          onClick={() => { setCurrentView("manage"); setIsProfileOpen(false); }}
                           className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-content-muted hover:text-content hover:bg-background rounded-xl transition-colors mt-1"
                         >
-                          <Users className="w-4 h-4" />
-                          Manage Creators
+                          <Users className="w-4 h-4" /> Manage Creators
                         </button>
                         <button className="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors mt-1 border-t border-border-subtle pt-3">
-                          <LogOut className="w-4 h-4" />
                           Sign Out
                         </button>
                       </div>
@@ -271,12 +256,8 @@ export default function MainLayout({
             </div>
           </div>
 
-          {/* Mobile Search and Buttons */}
-          <div
-            className={`flex md:hidden flex-col gap-3 transition-all duration-300 ${
-              scrollState !== "top" ? "py-3" : "pb-3"
-            }`}
-          >
+          {/* Mobile Search and Nav */}
+          <div className={`flex md:hidden flex-col gap-3 transition-all duration-300 ${scrollState !== "top" ? "py-3" : "pb-3"}`}>
             <div className="relative w-full group">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                 <Search className="w-4 h-4 text-content-muted group-focus-within:text-primary transition-colors" />
@@ -285,7 +266,8 @@ export default function MainLayout({
                 type="text"
                 placeholder="Search videos, creators..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => handleSearch(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 className="w-full pl-11 pr-4 py-2 bg-background/50 backdrop-blur-md border border-border-subtle rounded-full text-sm text-content focus:outline-none focus:ring-2 focus:ring-primary/50 focus:bg-surface transition-all placeholder-content-muted shadow-inner"
               />
             </div>
@@ -296,7 +278,6 @@ export default function MainLayout({
               >
                 Categories
               </button>
-
               <button
                 onClick={() => setCurrentView("creators")}
                 className={`text-sm font-medium transition-colors py-1 ${currentView === "creators" ? "text-primary" : "text-content-muted hover:text-content"}`}

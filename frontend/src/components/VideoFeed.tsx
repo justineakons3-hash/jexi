@@ -517,6 +517,11 @@ export default function VideoFeed({
     if (!cacheUsedRef.current) setFeedVideos([]);
     setHasMore(true);
     setLoading(false);
+    // When search changes, close any open video and scroll to top
+    if (debouncedSearch.trim()) {
+      setActiveVideo(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
     fetchPage(1, gen);
   }, [debouncedSearch, sourceFilter, fetchPage]);
 
@@ -572,7 +577,7 @@ export default function VideoFeed({
               <div
                 key={video.id}
                 className="flex gap-3 cursor-pointer group/top"
-                onClick={() => setActiveVideo(video)}
+                onClick={() => { setActiveVideo(video); window.scrollTo({ top: 0, behavior: "smooth" }); }}
               >
                 <span className="text-2xl font-black text-content-muted/30 w-6 flex-shrink-0 leading-none mt-1 group-hover/top:text-primary transition-colors">
                   {index + 1}
@@ -706,7 +711,7 @@ export default function VideoFeed({
                   video={video}
                   creator={creatorMap[video.creatorId]}
                   onSelectCreator={onSelectCreator}
-                  onClick={() => setActiveVideo(video)}
+                  onClick={() => { setActiveVideo(video); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                   isSaved={savedVideoIds.includes(video.id)}
                   isLiked={likedVideoIds.includes(video.id)}
                   onToggleSave={onToggleSave}

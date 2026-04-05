@@ -19,6 +19,34 @@ type QualityMap = Record<string, string>;
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
 /* ─────────────────────────────────────────────────────────────
+   Fullscreen helper
+   On mobile WebViews, requestFullscreen() on a div often fails.
+   webkitEnterFullscreen() on the <video> element works reliably.
+───────────────────────────────────────────────────────────── */
+function enterFullscreen(container: HTMLDivElement, video: HTMLVideoElement) {
+  const isMobile = window.matchMedia("(pointer: coarse)").matches;
+
+  if (isMobile) {
+    // Use video-native fullscreen — works in Android & iOS WebViews
+    const v = video as any;
+    if (v.webkitEnterFullscreen) {
+      v.webkitEnterFullscreen();
+      return;
+    }
+    if (v.requestFullscreen) { v.requestFullscreen(); return; }
+  }
+
+  // Desktop — use container fullscreen so our custom controls show
+  if (container.requestFullscreen) container.requestFullscreen();
+  else if ((container as any).webkitRequestFullscreen) (container as any).webkitRequestFullscreen();
+}
+
+function exitFullscreen() {
+  if (document.exitFullscreen) document.exitFullscreen();
+  else if ((document as any).webkitExitFullscreen) (document as any).webkitExitFullscreen();
+}
+
+/* ─────────────────────────────────────────────────────────────
    HQPORNER PLAYER
 ───────────────────────────────────────────────────────────── */
 function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; videoId?: string }) {
@@ -80,9 +108,7 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
           <>
             <p className="text-rose-400 font-semibold text-sm px-4">{errMsg}</p>
             <div className="flex flex-wrap justify-center gap-3 mt-1">
-              <button onClick={handlePlay} className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:opacity-90 transition">
-                Try again
-              </button>
+              <button onClick={handlePlay} className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:opacity-90 transition">Try again</button>
               {fallbackUrl && (
                 <a href={fallbackUrl} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1">
                   <ExternalLink className="w-4 h-4" /> Watch on HQPorner
@@ -107,7 +133,7 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
 }
 
 /* ─────────────────────────────────────────────────────────────
-   NATIVE VIDEO PLAYER
+   NATIVE VIDEO PLAYER  (HQPorner CDN streams + direct mp4)
 ───────────────────────────────────────────────────────────── */
 function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: string; qualityMap?: QualityMap }) {
   const videoRef     = useRef<HTMLVideoElement>(null);
@@ -165,34 +191,35 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePlay]);
 
-  /* ── Fullscreen change — hide/show Android status + nav bar ── */
+  /* ── Track fullscreen state from both div API and video API ── */
   useEffect(() => {
-    const onChange = () => {
-      const isFs = !!document.fullscreenElement;
+    const onFsChange = () => {
+      const isFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
       setIsFullscreen(isFs);
-
-      /*
-       * On Android, entering fullscreen via the browser fullscreen API
-       * does NOT hide the system status bar or navigation buttons.
-       * We use the Screen Orientation + Fullscreen APIs available in
-       * Capacitor's WebView to go truly immersive.
-       *
-       * document.documentElement.requestFullscreen() already fires above;
-       * we additionally lock to landscape and hide system UI via CSS.
-       */
       if (isFs) {
-        // Lock to landscape on mobile
         screen.orientation?.lock?.("landscape").catch(() => {});
-        // Hide status/nav bar via CSS on the html element
-        document.documentElement.style.setProperty("--safe-area-top", "0px");
         document.documentElement.classList.add("fullscreen-video");
       } else {
         screen.orientation?.unlock?.();
         document.documentElement.classList.remove("fullscreen-video");
       }
     };
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
+
+    // video element fires these when webkitEnterFullscreen is used
+    const onVideoFs    = () => { setIsFullscreen(true);  document.documentElement.classList.add("fullscreen-video"); screen.orientation?.lock?.("landscape").catch(() => {}); };
+    const onVideoFsEnd = () => { setIsFullscreen(false); document.documentElement.classList.remove("fullscreen-video"); screen.orientation?.unlock?.(); };
+
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+    videoRef.current?.addEventListener("webkitbeginfullscreen", onVideoFs);
+    videoRef.current?.addEventListener("webkitendfullscreen", onVideoFsEnd);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange);
+      videoRef.current?.removeEventListener("webkitbeginfullscreen", onVideoFs);
+      videoRef.current?.removeEventListener("webkitendfullscreen", onVideoFsEnd);
+    };
   }, []);
 
   const handleMouseMove = () => {
@@ -238,11 +265,13 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
     }
   };
 
-  const toggleFullscreen = async () => {
-    if (!document.fullscreenElement) {
-      await containerRef.current?.requestFullscreen?.();
+  const toggleFullscreen = () => {
+    if (isFullscreen) {
+      exitFullscreen();
     } else {
-      await document.exitFullscreen?.();
+      if (containerRef.current && videoRef.current) {
+        enterFullscreen(containerRef.current, videoRef.current);
+      }
     }
   };
 
@@ -261,11 +290,7 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
   return (
     <div
       ref={containerRef}
-      className={`w-full bg-black relative group ${
-        isFullscreen
-          ? "fixed inset-0 z-[9999] h-screen w-screen rounded-none"
-          : "aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
-      }`}
+      className="w-full bg-black relative group aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
     >
@@ -381,73 +406,25 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
 
 /* ─────────────────────────────────────────────────────────────
    EPORNER IFRAME PLAYER
-   Uses a sandboxed iframe to prevent the eporner player from
-   injecting clickable overlay links that navigate away.
-   allow-scripts + allow-same-origin are required for playback.
-   allow-popups and allow-top-navigation are intentionally omitted
-   so overlay ad/link clicks do nothing.
+   sandbox blocks overlay ad/link clicks from navigating away.
+   No extra fullscreen button — the iframe's own fullscreen works.
 ───────────────────────────────────────────────────────────── */
 function EpornerPlayer({ src, title }: { src: string; title: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    const onChange = () => {
-      const isFs = !!document.fullscreenElement;
-      setIsFullscreen(isFs);
-      if (isFs) {
-        screen.orientation?.lock?.("landscape").catch(() => {});
-        document.documentElement.classList.add("fullscreen-video");
-      } else {
-        screen.orientation?.unlock?.();
-        document.documentElement.classList.remove("fullscreen-video");
-      }
-    };
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
-
-  const toggleFullscreen = async () => {
-    if (!document.fullscreenElement) await containerRef.current?.requestFullscreen?.();
-    else await document.exitFullscreen?.();
-  };
-
   return (
-    <div
-      ref={containerRef}
-      className={`w-full bg-black relative ${
-        isFullscreen
-          ? "fixed inset-0 z-[9999] h-screen w-screen rounded-none"
-          : "aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
-      }`}
-    >
+    <div className="w-full aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle bg-black">
       <iframe
         src={src}
         className="w-full h-full border-0"
         /*
-         * sandbox restricts what the iframe can do:
-         * - allow-scripts   : required for the video player JS to run
-         * - allow-same-origin: required for the player to load its own resources
-         *
-         * Intentionally NOT included:
-         * - allow-popups          : blocks overlay links opening new tabs
-         * - allow-top-navigation  : blocks overlay links navigating the main page
-         * - allow-forms           : not needed
+         * allow-scripts + allow-same-origin = video player works
+         * NO allow-popups, NO allow-top-navigation = overlay links do nothing
+         * allow-fullscreen is in the `allow` attr below (separate from sandbox)
          */
         sandbox="allow-scripts allow-same-origin"
-        allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+        allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen"
         allowFullScreen
         title={title}
       />
-
-      {/* Fullscreen button overlay — since iframe swallows clicks we put our own */}
-      <button
-        onClick={toggleFullscreen}
-        className="absolute bottom-3 right-3 z-30 bg-black/60 hover:bg-black/80 text-white rounded-lg p-2 transition-colors"
-        title="Fullscreen"
-      >
-        {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-      </button>
     </div>
   );
 }
@@ -459,11 +436,9 @@ export default function VideoPlayer({ src, type, title, videoId }: VideoPlayerPr
   if (type === "hqporner") {
     return <HQPornerPlayer src={src} title={title} videoId={videoId} />;
   }
-
   if (type === "mp4") {
     return <NativePlayer src={src} title={title} />;
   }
-
   // eporner and all other iframe-based sources
   return <EpornerPlayer src={src} title={title} />;
 }
