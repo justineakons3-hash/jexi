@@ -38,7 +38,7 @@ export default function Welcome({ onComplete }: WelcomeProps) {
       >
         <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
           <video
-            src="/welcome.mp4"
+            src="./welcome.mp4"
             autoPlay
             muted
             loop
