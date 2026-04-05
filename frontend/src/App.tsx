@@ -16,20 +16,15 @@ import CategoriesView from "./components/CategoriesView";
 import CreatorsView from "./components/CreatorsView";
 import { INITIAL_CREATORS } from "./data";
 import { LOADING_GIF_PATH } from "./constants";
-import { hasFreshCache } from "./utils/videoCache";
 import axios from "axios";
 
-/* ─────────────────────────────────────────────────────────
-   Detect Capacitor native app vs browser
-───────────────────────────────────────────────────────── */
+/* ── Detect Capacitor native app ── */
 const IS_NATIVE = !!(window as any).Capacitor?.isNativePlatform?.();
 
 /* ─────────────────────────────────────────────────────────
    BACKEND BOOT LOADER
-   • Only shown inside the native APK (never in browser)
-   • Shown AFTER login, while VideoFeed fetches page 1
-   • Dismissed the moment onVideosSeen fires
-   • Counts down 2:00 then shows "Any moment now…"
+   Native app only. Shows while VideoFeed fetches page 1
+   when there is no cached content.
 ───────────────────────────────────────────────────────── */
 const BOOT_SECONDS = 120;
 
@@ -60,7 +55,6 @@ function BackendBootLoader() {
         className="w-24 h-24 object-contain"
         referrerPolicy="no-referrer"
       />
-
       {expired ? (
         <motion.p
           key="any-moment"
@@ -97,17 +91,6 @@ export default function App() {
   const [isSplashLoading, setIsSplashLoading] = useState(true);
   const [isLoggedIn,  setIsLoggedIn]  = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
-
-  /*
-   * Boot loader:
-   *   - Never shown in browser
-   *   - In native app: set to true inside handleLogin (after login succeeds),
-   *     only when there is no fresh cached content
-   *   - Set back to false inside handleVideosSeen (first videos arrive)
-   *
-   * Key fix vs previous version: boot loader is triggered AFTER login,
-   * so VideoFeed is already mounted and actively fetching behind the overlay.
-   */
   const [isBootLoading, setIsBootLoading] = useState(false);
 
   const [theme, setTheme]           = useState<ThemeMode>("dark");
@@ -127,7 +110,7 @@ export default function App() {
 
   const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
-  /* ── Clear any saved token — login required every session ── */
+  /* ── Always require login — clear any leftover token ── */
   useEffect(() => {
     localStorage.removeItem("token");
   }, []);
@@ -168,23 +151,24 @@ export default function App() {
 
   /*
    * ── handleLogin ──
-   * Called by Login component on successful auth.
-   * This is where we start the boot loader (native only, no cache).
-   * VideoFeed will be mounted right after welcome screen → it fetches
-   * in the background and calls handleVideosSeen to dismiss the overlay.
+   * fromCache = true  → user entered app instantly (cache existed),
+   *                     skip boot loader entirely
+   * fromCache = false → no cache, show boot loader on native until
+   *                     VideoFeed delivers first videos
    */
-  const handleLogin = useCallback(() => {
+  const handleLogin = useCallback((fromCache: boolean) => {
     setIsLoggedIn(true);
     setShowWelcome(true);
-    if (IS_NATIVE && !hasFreshCache()) {
+    // Only show boot loader on native app AND when there was no cache
+    if (IS_NATIVE && !fromCache) {
       setIsBootLoading(true);
     }
   }, []);
 
   /*
    * ── handleVideosSeen ──
-   * Called by VideoFeed the moment its first page of videos arrives.
-   * Dismisses boot loader and records seen videos for the session.
+   * Called by VideoFeed when first videos arrive.
+   * Dismisses boot loader and records videos for the session.
    */
   const handleVideosSeen = useCallback((videos: Video[]) => {
     setIsBootLoading(false);
@@ -255,7 +239,7 @@ export default function App() {
     <div className="min-h-screen bg-background text-content font-sans">
       <AnimatePresence mode="wait">
 
-        {/* 1. Branded splash — always shown for 1.5 s */}
+        {/* 1. Branded splash */}
         {isSplashLoading ? (
           <motion.div
             key="splash"
@@ -272,7 +256,7 @@ export default function App() {
           </motion.div>
 
         ) : !isLoggedIn ? (
-          /* 2. Login — always required, token cleared on mount */
+          /* 2. Login — always required */
           <Login key="login" onLogin={handleLogin} />
 
         ) : showWelcome ? (
@@ -286,9 +270,11 @@ export default function App() {
             transition={{ duration: 0.3 }}
           >
             {/*
-              3. Boot loader overlay — native app only, no cache, post-login.
-              VideoFeed IS mounted and fetching BEHIND this overlay.
-              It exits automatically when handleVideosSeen is called.
+              3. Boot loader overlay:
+              - Native app only
+              - Only when no cache existed at login time
+              - VideoFeed is mounted and fetching BEHIND this overlay
+              - Dismissed when handleVideosSeen fires
             */}
             <AnimatePresence>
               {isBootLoading && <BackendBootLoader key="boot" />}

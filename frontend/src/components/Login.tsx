@@ -3,14 +3,18 @@ import { motion } from "motion/react";
 import { Play } from "lucide-react";
 import { useState } from "react";
 import axios from "axios";
+import { hasFreshCache } from "../utils/videoCache";
 
 interface LoginProps {
-  onLogin: () => void;
+  /**
+   * fromCache = true  → caller should skip boot loader (cached videos available)
+   * fromCache = false → no cache, full cold-boot wait
+   */
+  onLogin: (fromCache: boolean) => void;
 }
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
-// Special guest credentials that redirect to jexi.com instead of the app
 const GUEST_USER = "jexi";
 const GUEST_PASS = "pass123";
 const GUEST_URL  = "https://jexi.com/";
@@ -32,22 +36,43 @@ export default function Login({ onLogin }: LoginProps) {
     }
 
     setLoading(true);
+
+    const cached = hasFreshCache();
+
+    if (cached) {
+      /*
+       * Cache exists → let the user into the app instantly.
+       * Auth still fires in the background so the token is available
+       * for save/like interactions, but we don't wait for it.
+       */
+      onLogin(true); // enters app immediately — no "Signing in…" wait
+
+      // Fire-and-forget auth — result doesn't block UI
+      axios
+        .post(`${API_BASE}/auth/login`, { email: username, password })
+        .catch((err) => console.warn("Background auth failed:", err));
+
+      return; // setLoading(false) not needed — component will unmount
+    }
+
+    /*
+     * No cache → must wait for auth before entering so we can show
+     * the boot loader while VideoFeed fetches fresh content.
+     */
     try {
       const res = await axios.post(`${API_BASE}/auth/login`, {
         email: username,
         password,
       });
-
       if (res.status === 200) {
-        // Do NOT persist token — user must log in fresh every session
-        onLogin();
+        onLogin(false); // enters app, boot loader will show
       }
     } catch (err) {
       console.error("Login failed:", err);
       setError("Invalid username or password. Please try again.");
-    } finally {
       setLoading(false);
     }
+    // Note: don't call setLoading(false) on success — component unmounts
   };
 
   return (
