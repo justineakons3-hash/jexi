@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ThemeMode, ColorTheme, Creator, Video } from "./types";
 import Login from "./components/Login";
@@ -18,11 +18,10 @@ import { INITIAL_CREATORS } from "./data";
 import { LOADING_GIF_PATH } from "./constants";
 import axios from "axios";
 
-/* ── Detect Capacitor native app ── */
 const IS_NATIVE = !!(window as any).Capacitor?.isNativePlatform?.();
 
 /* ─────────────────────────────────────────────────────────
-   BACKEND BOOT LOADER — native app only, no cache, post-login
+   BACKEND BOOT LOADER — native only, no cache, post-login
 ───────────────────────────────────────────────────────── */
 const BOOT_SECONDS = 120;
 
@@ -47,34 +46,15 @@ function BackendBootLoader() {
       exit={{ opacity: 0, scale: 1.05 }}
       transition={{ duration: 0.5 }}
     >
-      <img
-        src={LOADING_GIF_PATH}
-        alt="Loading…"
-        className="w-24 h-24 object-contain"
-        referrerPolicy="no-referrer"
-      />
+      <img src={LOADING_GIF_PATH} alt="Loading…" className="w-24 h-24 object-contain" />
       {expired ? (
-        <motion.p
-          key="any-moment"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-content-muted text-sm"
-        >
+        <motion.p key="any-moment" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="text-content-muted text-sm">
           Any moment now…
         </motion.p>
       ) : (
-        <motion.div
-          key="countdown"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-center gap-1"
-        >
-          <p className="text-content text-sm font-medium">
-            Waking up the server — first load takes a moment
-          </p>
-          <p className="text-primary text-3xl font-black tabular-nums">
-            {mm}:{ss}
-          </p>
+        <motion.div key="countdown" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center gap-1">
+          <p className="text-content text-sm font-medium">Waking up the server — first load takes a moment</p>
+          <p className="text-primary text-3xl font-black tabular-nums">{mm}:{ss}</p>
           <p className="text-content-muted text-xs">estimated wait time</p>
         </motion.div>
       )}
@@ -83,21 +63,12 @@ function BackendBootLoader() {
 }
 
 /* ─────────────────────────────────────────────────────────
-   Helper — get token from sessionStorage
-   sessionStorage is cleared automatically when the app/tab closes,
-   so the user always has to log in again on next open.
-───────────────────────────────────────────────────────── */
-function getToken() {
-  return sessionStorage.getItem("token") || "";
-}
-
-/* ─────────────────────────────────────────────────────────
    APP
 ───────────────────────────────────────────────────────── */
 export default function App() {
   const [isSplashLoading, setIsSplashLoading] = useState(true);
-  const [isLoggedIn,  setIsLoggedIn]  = useState(false);
-  const [showWelcome, setShowWelcome] = useState(false);
+  const [isLoggedIn,    setIsLoggedIn]    = useState(false);
+  const [showWelcome,   setShowWelcome]   = useState(false);
   const [isBootLoading, setIsBootLoading] = useState(false);
 
   const [theme, setTheme]           = useState<ThemeMode>("dark");
@@ -115,19 +86,14 @@ export default function App() {
   const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
   const [selectedCategory,  setSelectedCategory]  = useState<string | null>(null);
 
+  // Token stored in a ref so it's always current without triggering re-renders
+  const tokenRef = useRef<string>("");
+
+  const getToken = () => tokenRef.current;
+
   const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
-  /*
-   * Clear sessionStorage token on mount — this runs once when the app loads.
-   * sessionStorage already clears itself when the browser/app closes,
-   * but this ensures a fresh login if the page is refreshed too.
-   */
-  useEffect(() => {
-    sessionStorage.removeItem("token");
-    localStorage.removeItem("token"); // clean up old localStorage tokens
-  }, []);
-
-  /* ── Brief branded splash (1.5 s) ── */
+  /* ── Splash ── */
   useEffect(() => {
     const t = setTimeout(() => setIsSplashLoading(false), 1500);
     return () => clearTimeout(t);
@@ -141,36 +107,56 @@ export default function App() {
     if (colorTheme) root.style.setProperty("--theme-primary", colorTheme);
   }, [theme, colorTheme]);
 
-  /* ── Load creators + interactions after login ── */
+  /* ── Fetch interactions whenever we get a valid token ── */
+  const fetchInteractions = useCallback((token: string) => {
+    if (!token) return;
+    axios
+      .get(`${API_BASE}/user/interactions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      .then((res) => {
+        setSavedVideoIds(res.data.savedVideoIds || []);
+        setLikedVideoIds(res.data.likedVideoIds || []);
+      })
+      .catch((err) => console.error("Interactions fetch error:", err));
+  }, [API_BASE]);
+
+  /* ── Fetch creators (no auth needed) ── */
   useEffect(() => {
     if (!isLoggedIn) return;
-    const token   = getToken();
-    const headers = { Authorization: `Bearer ${token}` };
-
     axios
       .get(`${API_BASE}/creators?page=1&limit=100`)
       .then((res) => setCreators(res.data.creators || []))
       .catch((err) => console.error("Creators fetch error:", err));
-
-    // Only fetch interactions if we have a token
-    if (token) {
-      axios
-        .get(`${API_BASE}/user/interactions`, { headers })
-        .then((res) => {
-          setSavedVideoIds(res.data.savedVideoIds || []);
-          setLikedVideoIds(res.data.likedVideoIds || []);
-        })
-        .catch((err) => console.error("Interactions fetch error:", err));
-    }
   }, [isLoggedIn, API_BASE]);
 
-  const handleLogin = useCallback((fromCache: boolean) => {
-    setIsLoggedIn(true);
-    setShowWelcome(true);
-    if (IS_NATIVE && !fromCache) {
-      setIsBootLoading(true);
+  /*
+   * handleLogin — called by Login component.
+   *
+   * On cache-fast path it's called TWICE:
+   *   1st call: token="" fromCache=true  → enter app immediately
+   *   2nd call: token=JWT fromCache=true → token arrived, fetch interactions
+   *
+   * On no-cache path:
+   *   1 call: token=JWT fromCache=false → enter app, start boot loader
+   */
+  const handleLogin = useCallback((token: string, fromCache: boolean) => {
+    if (token) {
+      // Store token in ref — available synchronously for all API calls
+      tokenRef.current = token;
+      // Fetch interactions now that we have a real token
+      fetchInteractions(token);
     }
-  }, []);
+
+    if (!isLoggedIn) {
+      // First call — transition to logged-in state
+      setIsLoggedIn(true);
+      setShowWelcome(true);
+      if (IS_NATIVE && !fromCache) {
+        setIsBootLoading(true);
+      }
+    }
+  }, [isLoggedIn, fetchInteractions]);
 
   const handleVideosSeen = useCallback((videos: Video[]) => {
     setIsBootLoading(false);
@@ -183,7 +169,7 @@ export default function App() {
 
   const handleAuthError = (err: unknown) => {
     if (axios.isAxiosError(err) && err.response?.status === 401) {
-      sessionStorage.removeItem("token");
+      tokenRef.current = "";
       setIsLoggedIn(false);
       setShowWelcome(false);
     }
@@ -198,17 +184,15 @@ export default function App() {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
     try {
-      const token = getToken();
       const res = await axios.post(
         `${API_BASE}/user/save/${id}`,
         { video: video || null },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${getToken()}` } }
       );
       setSavedVideoIds(res.data.savedVideoIds);
     } catch (err) {
       console.error("Save toggle error:", err);
       handleAuthError(err);
-      // Revert optimistic update on error
       setSavedVideoIds((prev) =>
         prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
       );
@@ -220,11 +204,10 @@ export default function App() {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
     try {
-      const token = getToken();
       const res = await axios.post(
         `${API_BASE}/user/like/${id}`,
         { video: video || null },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${getToken()}` } }
       );
       setLikedVideoIds(res.data.likedVideoIds);
     } catch (err) {
@@ -241,8 +224,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-content font-sans">
       <AnimatePresence mode="wait">
-
-        {/* 1. Branded splash */}
         {isSplashLoading ? (
           <motion.div
             key="splash"
@@ -250,12 +231,7 @@ export default function App() {
             exit={{ opacity: 0, scale: 1.1 }}
             transition={{ duration: 0.5 }}
           >
-            <img
-              src={LOADING_GIF_PATH}
-              alt="Loading..."
-              className="w-24 h-24 object-contain"
-              referrerPolicy="no-referrer"
-            />
+            <img src={LOADING_GIF_PATH} alt="Loading..." className="w-24 h-24 object-contain" />
           </motion.div>
 
         ) : !isLoggedIn ? (
@@ -265,12 +241,7 @@ export default function App() {
           <Welcome key="welcome" onComplete={handleWelcomeComplete} />
 
         ) : (
-          <motion.div
-            key="app"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3 }}
-          >
+          <motion.div key="app" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
             <AnimatePresence>
               {isBootLoading && <BackendBootLoader key="boot" />}
             </AnimatePresence>

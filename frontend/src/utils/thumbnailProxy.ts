@@ -3,10 +3,6 @@
  *
  * Rewrites HQPorner thumbnail URLs so they go through our backend proxy,
  * which adds the required Referer header to avoid 403 errors from the CDN.
- *
- * Usage:
- *   import { proxyThumbnail } from "../utils/thumbnailProxy";
- *   <img src={proxyThumbnail(video.thumbnail, video.type)} />
  */
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
@@ -17,6 +13,19 @@ const HQPORNER_CDN_HOSTS = [
   "img.hqporner.com",
   "hqporner.com",
 ];
+
+/**
+ * Normalise any URL to a full absolute https:// URL.
+ * Handles:
+ *   "//fastporndelivery..."  → "https://fastporndelivery..."
+ *   "https://..."            → unchanged
+ *   ""                       → ""
+ */
+function normalizeUrl(url: string): string {
+  if (!url) return url;
+  if (url.startsWith("//")) return "https:" + url;
+  return url;
+}
 
 function isHQPornerCDN(url: string): boolean {
   try {
@@ -31,14 +40,17 @@ function isHQPornerCDN(url: string): boolean {
 
 /**
  * Returns a proxied URL for HQPorner thumbnails, passthrough for everything else.
+ * Always normalizes protocol-relative URLs first.
  */
 export function proxyThumbnail(thumbnail: string, type?: string): string {
   if (!thumbnail) return thumbnail;
 
-  // Only proxy if it's an HQPorner CDN URL (by type hint OR by hostname)
-  if (type === "hqporner" || isHQPornerCDN(thumbnail)) {
-    return `${API_BASE}/proxy/image?url=${encodeURIComponent(thumbnail)}`;
+  // Normalize // → https:// first so new URL() and encodeURIComponent work correctly
+  const normalized = normalizeUrl(thumbnail);
+
+  if (type === "hqporner" || isHQPornerCDN(normalized)) {
+    return `${API_BASE}/proxy/image?url=${encodeURIComponent(normalized)}`;
   }
 
-  return thumbnail;
+  return normalized;
 }

@@ -6,7 +6,9 @@ const config: CapacitorConfig = {
   webDir: "../backend/public",
   server: {
     allowNavigation: ["jexi.onrender.com"],
+    
   },
+  
 };
 
 export default config;

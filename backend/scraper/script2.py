@@ -13,6 +13,7 @@ Output: JSON array to stdout, consumed by Node.js scrape.js.
 
 import sys
 import json
+import time
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -21,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE        = "https://hqporner.com"
 LIST_PAGES  = range(1, 11)   # 10 pages ≈ 500 videos
 MAX_WORKERS = 5
+DELAY       = 0.3
 
 HEADERS = {
     "User-Agent": (
@@ -30,13 +32,6 @@ HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
-
-
-def normalize_url(url: str) -> str:
-    """Convert protocol-relative //example.com/... to https://example.com/..."""
-    if url and url.startswith("//"):
-        return "https:" + url
-    return url
 
 
 def get_listing_url(page: int) -> str:
@@ -75,8 +70,7 @@ def scrape_listing_page(page: int) -> list:
             for attr in ("data-src", "data-lazy", "src"):
                 val = img.get(attr, "")
                 if val and "blank" not in val and not val.startswith("data:"):
-                    # Always normalize to absolute https:// URL
-                    thumbnail = normalize_url(val)
+                    thumbnail = ("https:" + val) if val.startswith("//") else val
                     break
 
         title = (img.get("alt", "").strip() if img else "") or link.get_text(strip=True)
@@ -87,6 +81,7 @@ def scrape_listing_page(page: int) -> list:
         dur_el   = link.find(class_=re.compile(r"duration|time", re.I))
         duration = dur_el.get_text(strip=True) if dur_el else "Unknown"
 
+        # url = page_url for now — resolved to CDN on-demand when user clicks
         items.append({
             "id":        vid_id,
             "title":     title,

@@ -6,7 +6,8 @@ import axios from "axios";
 import { hasFreshCache } from "../utils/videoCache";
 
 interface LoginProps {
-  onLogin: (fromCache: boolean) => void;
+  /** token = JWT string; fromCache = whether cached videos exist */
+  onLogin: (token: string, fromCache: boolean) => void;
 }
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
@@ -25,29 +26,29 @@ export default function Login({ onLogin }: LoginProps) {
     e.preventDefault();
     setError("");
 
-    // ── Special shortcut: jexi / pass123 → open jexi.com ──
     if (username.trim() === GUEST_USER && password === GUEST_PASS) {
       window.open(GUEST_URL, "_blank", "noopener,noreferrer");
       return;
     }
 
     setLoading(true);
-
     const cached = hasFreshCache();
 
     if (cached) {
       /*
-       * Cache exists → enter app instantly, auth in background.
-       * Token saved to sessionStorage so it's available for save/like
-       * calls during this session, but cleared when app is closed.
+       * Cache path — enter app instantly, fetch token in background.
+       * We call onLogin("", true) immediately so the UI doesn't block,
+       * then fire the real auth and call onLogin again once token arrives.
        */
-      onLogin(true);
+      onLogin("", true); // enter immediately with no token yet
 
       axios
         .post(`${API_BASE}/auth/login`, { email: username, password })
         .then((res) => {
-          if (res.data?.token) {
-            sessionStorage.setItem("token", res.data.token);
+          const token = res.data?.token || "";
+          if (token) {
+            // Deliver token to App so it can fetch interactions
+            onLogin(token, true);
           }
         })
         .catch((err) => console.warn("Background auth failed:", err));
@@ -55,18 +56,15 @@ export default function Login({ onLogin }: LoginProps) {
       return;
     }
 
-    // No cache → wait for auth before entering
+    // No cache — wait for auth before entering
     try {
       const res = await axios.post(`${API_BASE}/auth/login`, {
         email: username,
         password,
       });
       if (res.status === 200) {
-        // Save token to sessionStorage — survives the session, cleared on app close
-        if (res.data?.token) {
-          sessionStorage.setItem("token", res.data.token);
-        }
-        onLogin(false);
+        const token = res.data?.token || "";
+        onLogin(token, false);
       }
     } catch (err) {
       console.error("Login failed:", err);
