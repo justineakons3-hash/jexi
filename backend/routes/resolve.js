@@ -9,9 +9,6 @@
  *   Step 2. Fetch mydaddy.cc embed page → extract bigcdn.cc MP4 URLs
  *   Step 3. Wrap each CDN URL in /api/stream?url=<encoded>&ref=<encoded-page-url>
  *   Step 4. Return bestUrl + qualityMap (all proxied)
- *
- * On 404: marks the video deleted:true in MongoDB so the feed
- * stops serving it to users on future page loads.
  */
 
 const express = require("express");
@@ -23,9 +20,6 @@ const router = express.Router();
 const TIMEOUT_MS   = 15000;
 const QUALITY_PREF = ["2160", "4k", "1440", "1080", "720", "480", "360"];
 
-// ── axios instances ───────────────────────────────────────────────────────────
-
-// Rotate User-Agents so Cloudflare can't fingerprint repeated server requests
 const USER_AGENTS = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -39,13 +33,6 @@ function randomUA() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
-// cloudscraper handles Cloudflare's JS challenge + TLS fingerprint detection.
-// axios has a detectable Node.js JA3 fingerprint that CF blocks intermittently.
-// cloudscraper mimics a real browser's TLS handshake so CF lets it through.
 const cloudscraper = require("cloudscraper");
 
 const embedHttp = axios.create({
@@ -60,8 +47,6 @@ const embedHttp = axios.create({
   maxRedirects: 5,
   decompress:   true,
 });
-
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 function rankUrl(u) {
   for (let i = 0; i < QUALITY_PREF.length; i++) {
@@ -96,22 +81,32 @@ function ensureHttps(url) {
   return url;
 }
 
+/*
+ * KEY FIX: always produce an absolute stream URL.
+ *
+ * In the APK, relative URLs like /api/stream?... resolve to
+ * capacitor://localhost/api/stream which doesn't exist.
+ * We need https://jexi.onrender.com/api/stream?...
+ *
+ * Priority:
+ *   1. process.env.BACKEND_URL (set this on Render to https://jexi.onrender.com)
+ *   2. Hard-coded fallback so it always works even if env var is missing
+ */
+const BACKEND_BASE = (
+  process.env.BACKEND_URL ||
+  "https://jexi.onrender.com"
+).replace(/\/$/, "");
+
 function toProxyUrl(cdnUrl, pageUrl) {
-  const base = process.env.BACKEND_URL
-    ? process.env.BACKEND_URL.replace(/\/$/, "")
-    : "";
   return (
-    `${base}/api/stream` +
+    `${BACKEND_BASE}/api/stream` +
     `?url=${encodeURIComponent(cdnUrl)}` +
     `&ref=${encodeURIComponent(pageUrl)}`
   );
 }
 
-// ── mark a video deleted in MongoDB ──────────────────────────────────────────
-
 async function markDeleted(videoId, pageUrl) {
   try {
-    // Try by videoId first, fall back to URL match for search-scraped videos
     if (videoId) {
       await Video.updateOne({ id: videoId }, { $set: { deleted: true } });
       console.log(`[resolve] marked deleted by id: ${videoId}`);
@@ -120,14 +115,9 @@ async function markDeleted(videoId, pageUrl) {
       console.log(`[resolve] marked deleted by url: ${pageUrl}`);
     }
   } catch (err) {
-    // Non-critical — don't let a DB error block the response
     console.warn(`[resolve] could not mark deleted: ${err.message}`);
   }
 }
-
-// ── step 1: get mydaddy token from HQPorner page HTML ────────────────────────
-// Uses cloudscraper instead of axios — cloudscraper executes CF's JS challenge
-// and uses a real browser TLS fingerprint, so Cloudflare doesn't block it.
 
 async function getEmbedToken(pageUrl) {
   const urlVariants = [pageUrl];
@@ -149,6 +139,7 @@ async function getEmbedToken(pageUrl) {
           uri:     url,
           timeout: TIMEOUT_MS,
           headers: {
+            "User-Agent":      randomUA(),
             "Accept-Language": "en-US,en;q=0.9",
             "Referer":         "https://hqporner.com/",
           },
@@ -164,7 +155,6 @@ async function getEmbedToken(pageUrl) {
         });
       });
 
-      // Got HTML — extract token
       const match = html.match(/mydaddy\.cc\/video\/([a-f0-9]+)\//i);
       if (match) {
         return { token: match[1], embedUrl: `https://mydaddy.cc/video/${match[1]}/` };
@@ -180,20 +170,16 @@ async function getEmbedToken(pageUrl) {
     } catch (err) {
       console.warn(`[resolve] ${url} → ${err.message}`);
       lastErr = err;
-      // 404 on all variants = truly gone
       if (err.status === 404 && url === urlVariants[urlVariants.length - 1]) {
         const e = new Error("This video has been removed from HQPorner.");
         e.code  = "DELETED";
         throw e;
       }
-      // Otherwise try next variant
     }
   }
 
   throw lastErr || new Error("Could not fetch HQPorner page");
 }
-
-// ── step 2: get CDN URLs from mydaddy embed page ─────────────────────────────
 
 async function getCdnUrlsFromEmbed(embedUrl, pageUrl) {
   let html;
@@ -220,8 +206,6 @@ async function getCdnUrlsFromEmbed(embedUrl, pageUrl) {
   return all;
 }
 
-// ── main resolver ─────────────────────────────────────────────────────────────
-
 async function resolve(pageUrl) {
   const { token, embedUrl } = await getEmbedToken(pageUrl);
   console.log(`[resolve] token: ${token} → ${embedUrl}`);
@@ -244,16 +228,6 @@ async function resolve(pageUrl) {
   return { bestUrl: proxiedBest, qualityMap: proxiedMap };
 }
 
-// ── route handler ─────────────────────────────────────────────────────────────
-//
-// Accepts either:
-//   { pageUrl, videoId }              — server fetches HQporner page (may hit CF)
-//   { pageUrl, videoId, embedToken }  — browser already extracted the token,
-//                                       server skips the HQporner fetch entirely
-//
-// The embedToken path is preferred — the browser is a real browser so
-// Cloudflare never blocks it. The server only talks to mydaddy.cc + bigcdn.cc.
-
 router.post("/", async (req, res) => {
   const { pageUrl, videoId } = req.body;
 
@@ -263,7 +237,6 @@ router.post("/", async (req, res) => {
 
   console.log("[resolve] pageUrl received:", pageUrl);
   try {
-    // Cache check
     if (videoId) {
       const cached = await Video.findOne({ id: videoId }).lean();
       if (cached?.cdnUrl && cached.cdnUrl.includes("/api/stream") && cached.cdnUrl.includes("&ref=")) {
@@ -277,7 +250,6 @@ router.post("/", async (req, res) => {
     console.log(`[resolve] ✓ ${bestUrl}`);
     console.log(`[resolve] qualities: ${Object.keys(qualityMap).join(", ")}`);
 
-    // Cache the working result
     if (videoId) {
       await Video.updateOne(
         { id: videoId },

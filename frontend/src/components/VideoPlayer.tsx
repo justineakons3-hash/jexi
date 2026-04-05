@@ -14,32 +14,21 @@ interface VideoPlayerProps {
   videoId?: string;
 }
 
-type QualityMap = Record<string, string>; // { "360": url, "720": url, … }
+type QualityMap = Record<string, string>;
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
 /* ─────────────────────────────────────────────────────────────
    HQPORNER PLAYER
-   Resolves the CDN URL on demand via POST /api/videos/resolve.
-   BUG FIX: removed `window.open(fallback)` auto-redirect.
-   Now stores fallbackUrl in state and shows a manual button.
 ───────────────────────────────────────────────────────────── */
-function HQPornerPlayer({
-  src,
-  title,
-  videoId,
-}: {
-  src: string;
-  title: string;
-  videoId?: string;
-}) {
+function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; videoId?: string }) {
   type State = "idle" | "loading" | "playing" | "error" | "deleted";
 
   const [state, setState]             = useState<State>("idle");
   const [cdnUrl, setCdnUrl]           = useState<string>("");
   const [qualityMap, setQualityMap]   = useState<QualityMap>({});
   const [errMsg, setErrMsg]           = useState<string>("");
-  const [fallbackUrl, setFallbackUrl] = useState<string>("");   // ← NEW
+  const [fallbackUrl, setFallbackUrl] = useState<string>("");
 
   const handlePlay = async () => {
     setState("loading");
@@ -47,14 +36,9 @@ function HQPornerPlayer({
     setFallbackUrl("");
 
     try {
-      const res = await axios.post(`${API_BASE}/videos/resolve`, {
-        pageUrl: src,
-        videoId,
-      });
-
+      const res = await axios.post(`${API_BASE}/videos/resolve`, { pageUrl: src, videoId });
       const url = res.data?.cdnUrl;
       if (!url) throw new Error("No CDN URL returned");
-
       setQualityMap(res.data?.qualityMap || {});
       setCdnUrl(url);
       setState("playing");
@@ -62,15 +46,9 @@ function HQPornerPlayer({
       const data     = (err?.response?.data || {}) as any;
       const fallback = data.fallbackUrl || src;
       const message  = data.error || "Could not load video stream.";
-
       setFallbackUrl(fallback);
-
-      if (data.deleted) {
-        setState("deleted");
-      } else {
-        setErrMsg(message);
-        setState("error");
-      }
+      if (data.deleted) setState("deleted");
+      else { setErrMsg(message); setState("error"); }
     }
   };
 
@@ -81,21 +59,16 @@ function HQPornerPlayer({
   return (
     <div className="w-full aspect-video bg-black rounded-2xl overflow-hidden flex flex-col items-center justify-center gap-4 border border-border-subtle relative">
       <div className="absolute inset-0 bg-gradient-to-b from-black/60 to-black/90" />
-
       <div className="relative z-10 flex flex-col items-center gap-4 px-6 text-center">
         {state === "idle" && (
           <>
-            <button
-              onClick={handlePlay}
-              className="w-20 h-20 bg-primary hover:bg-primary/80 rounded-full flex items-center justify-center shadow-2xl shadow-primary/40 transition-all hover:scale-105 active:scale-95"
-            >
+            <button onClick={handlePlay} className="w-20 h-20 bg-primary hover:bg-primary/80 rounded-full flex items-center justify-center shadow-2xl shadow-primary/40 transition-all hover:scale-105 active:scale-95">
               <Play className="w-9 h-9 text-white ml-1" />
             </button>
             <p className="text-white/60 text-sm">Click to load video</p>
             <p className="text-white/30 text-xs">May take 10–15 seconds</p>
           </>
         )}
-
         {state === "loading" && (
           <>
             <Loader2 className="w-14 h-14 text-primary animate-spin" />
@@ -103,46 +76,27 @@ function HQPornerPlayer({
             <p className="text-white/40 text-xs">This takes 10–15 seconds</p>
           </>
         )}
-
         {state === "error" && (
           <>
             <p className="text-rose-400 font-semibold text-sm px-4">{errMsg}</p>
             <div className="flex flex-wrap justify-center gap-3 mt-1">
-              <button
-                onClick={handlePlay}
-                className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:opacity-90 transition"
-              >
+              <button onClick={handlePlay} className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:opacity-90 transition">
                 Try again
               </button>
               {fallbackUrl && (
-                <a
-                  href={fallbackUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  Watch on HQPorner
+                <a href={fallbackUrl} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1">
+                  <ExternalLink className="w-4 h-4" /> Watch on HQPorner
                 </a>
               )}
             </div>
           </>
         )}
-
         {state === "deleted" && (
           <>
-            <p className="text-content-muted text-sm px-4 text-center">
-              This video has been removed from HQPorner.
-            </p>
+            <p className="text-content-muted text-sm px-4 text-center">This video has been removed from HQPorner.</p>
             {fallbackUrl && (
-              <a
-                href={fallbackUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Check on HQPorner
+              <a href={fallbackUrl} target="_blank" rel="noopener noreferrer" className="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-medium hover:bg-white/20 transition flex items-center gap-1">
+                <ExternalLink className="w-4 h-4" /> Check on HQPorner
               </a>
             )}
           </>
@@ -153,29 +107,18 @@ function HQPornerPlayer({
 }
 
 /* ─────────────────────────────────────────────────────────────
-   NATIVE VIDEO PLAYER  (used for HQPorner CDN streams + mp4)
+   NATIVE VIDEO PLAYER
 ───────────────────────────────────────────────────────────── */
-function NativePlayer({
-  src,
-  title,
-  qualityMap = {},
-}: {
-  src: string;
-  title: string;
-  qualityMap?: QualityMap;
-}) {
+function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: string; qualityMap?: QualityMap }) {
   const videoRef     = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const availableQualities = Object.keys(qualityMap).sort(
-    (a, b) => parseInt(b) - parseInt(a)
-  );
+  const availableQualities = Object.keys(qualityMap).sort((a, b) => parseInt(b) - parseInt(a));
   const hasQualities = availableQualities.length > 0;
 
   const [quality, setQuality]           = useState<string>(availableQualities[0] || "auto");
   const [activeSrc, setActiveSrc]       = useState<string>(src);
   const [showSettings, setShowSettings] = useState(false);
-
   const [isPlaying, setIsPlaying]       = useState(false);
   const [volume, setVolume]             = useState(1);
   const [isMuted, setIsMuted]           = useState(false);
@@ -222,8 +165,32 @@ function NativePlayer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePlay]);
 
+  /* ── Fullscreen change — hide/show Android status + nav bar ── */
   useEffect(() => {
-    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const onChange = () => {
+      const isFs = !!document.fullscreenElement;
+      setIsFullscreen(isFs);
+
+      /*
+       * On Android, entering fullscreen via the browser fullscreen API
+       * does NOT hide the system status bar or navigation buttons.
+       * We use the Screen Orientation + Fullscreen APIs available in
+       * Capacitor's WebView to go truly immersive.
+       *
+       * document.documentElement.requestFullscreen() already fires above;
+       * we additionally lock to landscape and hide system UI via CSS.
+       */
+      if (isFs) {
+        // Lock to landscape on mobile
+        screen.orientation?.lock?.("landscape").catch(() => {});
+        // Hide status/nav bar via CSS on the html element
+        document.documentElement.style.setProperty("--safe-area-top", "0px");
+        document.documentElement.classList.add("fullscreen-video");
+      } else {
+        screen.orientation?.unlock?.();
+        document.documentElement.classList.remove("fullscreen-video");
+      }
+    };
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
@@ -272,8 +239,11 @@ function NativePlayer({
   };
 
   const toggleFullscreen = async () => {
-    if (!document.fullscreenElement) await containerRef.current?.requestFullscreen?.();
-    else await document.exitFullscreen?.();
+    if (!document.fullscreenElement) {
+      await containerRef.current?.requestFullscreen?.();
+    } else {
+      await document.exitFullscreen?.();
+    }
   };
 
   const formatTime = (t: number) => {
@@ -293,7 +263,7 @@ function NativePlayer({
       ref={containerRef}
       className={`w-full bg-black relative group ${
         isFullscreen
-          ? "h-screen rounded-none"
+          ? "fixed inset-0 z-[9999] h-screen w-screen rounded-none"
           : "aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
       }`}
       onMouseMove={handleMouseMove}
@@ -305,13 +275,9 @@ function NativePlayer({
         className="w-full h-full object-contain"
         onTimeUpdate={() => {
           if (videoRef.current)
-            setProgress(
-              (videoRef.current.currentTime / videoRef.current.duration) * 100
-            );
+            setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
         }}
-        onLoadedMetadata={() => {
-          if (videoRef.current) setDuration(videoRef.current.duration);
-        }}
+        onLoadedMetadata={() => { if (videoRef.current) setDuration(videoRef.current.duration); }}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => setIsBuffering(false)}
         onPlay={() => setIsPlaying(true)}
@@ -329,80 +295,53 @@ function NativePlayer({
             e.clientX - rect.left > rect.width / 2 ? 5 : -5;
         }}
         autoPlay
+        playsInline
       />
 
       {isBuffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10">
-          <img
-            src={LOADING_GIF_PATH}
-            alt="Buffering"
-            className="w-16 h-16 object-contain"
-            referrerPolicy="no-referrer"
-          />
+          <img src={LOADING_GIF_PATH} alt="Buffering" className="w-16 h-16 object-contain" />
         </div>
       )}
 
       {/* Controls */}
       <div
-        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-16 pb-4 transition-opacity duration-300 ${
-          showControls ? "opacity-100" : "opacity-0"
+        className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-16 pb-4 transition-opacity duration-300 z-20 ${
+          showControls ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
       >
-        {/* Progress bar */}
         <div className="mb-4">
           <input
-            type="range"
-            min="0"
-            max="100"
-            value={progress}
+            type="range" min="0" max="100" value={progress}
             onChange={handleSeek}
             onClick={(e) => e.stopPropagation()}
             className="w-full h-1 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
-            style={{
-              background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)`,
-            }}
+            style={{ background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)` }}
           />
         </div>
 
         <div className="flex items-center justify-between">
-          {/* Left controls */}
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 5; }}
-              className="text-white hover:text-primary transition-colors"
-            >
+            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 5; }} className="text-white hover:text-primary transition-colors">
               <Rewind className="w-5 h-5" />
             </button>
             <button onClick={togglePlay} className="text-white hover:text-primary transition-colors">
               {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
             </button>
-            <button
-              onClick={() => { if (videoRef.current) videoRef.current.currentTime += 5; }}
-              className="text-white hover:text-primary transition-colors"
-            >
+            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime += 5; }} className="text-white hover:text-primary transition-colors">
               <FastForward className="w-5 h-5" />
             </button>
 
             <div className="flex items-center gap-2 group/vol">
               <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
-                {isMuted || volume === 0 ? (
-                  <VolumeX className="w-5 h-5" />
-                ) : (
-                  <Volume2 className="w-5 h-5" />
-                )}
+                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </button>
               <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={isMuted ? 0 : volume}
+                type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
                 onChange={handleVolumeChange}
                 onClick={(e) => e.stopPropagation()}
                 className="w-20 h-1 rounded-full appearance-none cursor-pointer hidden group-hover/vol:block [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                style={{
-                  background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)`,
-                }}
+                style={{ background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)` }}
               />
             </div>
 
@@ -411,31 +350,18 @@ function NativePlayer({
             </span>
           </div>
 
-          {/* Right controls */}
           <div className="flex items-center gap-4 relative">
             {hasQualities && (
               <div className="relative">
-                <button
-                  onClick={() => setShowSettings((s) => !s)}
-                  className="text-white hover:text-primary transition-colors flex items-center gap-1"
-                >
+                <button onClick={() => setShowSettings((s) => !s)} className="text-white hover:text-primary transition-colors flex items-center gap-1">
                   <Settings className="w-5 h-5" />
                   <span className="text-xs font-bold">{qualityLabel(quality)}</span>
                 </button>
-
                 {showSettings && (
                   <div className="absolute bottom-full right-0 mb-4 bg-surface/95 backdrop-blur-md border border-border-subtle rounded-xl py-2 min-w-[120px] shadow-2xl z-50">
-                    <div className="px-3 py-1 text-xs font-semibold text-content-muted uppercase tracking-wider border-b border-border-subtle mb-1">
-                      Quality
-                    </div>
+                    <div className="px-3 py-1 text-xs font-semibold text-content-muted uppercase tracking-wider border-b border-border-subtle mb-1">Quality</div>
                     {availableQualities.map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => switchQuality(q)}
-                        className={`w-full text-left px-4 py-2 text-sm hover:bg-white/10 transition-colors ${
-                          quality === q ? "text-primary font-bold" : "text-content"
-                        }`}
-                      >
+                      <button key={q} onClick={() => switchQuality(q)} className={`w-full text-left px-4 py-2 text-sm hover:bg-white/10 transition-colors ${quality === q ? "text-primary font-bold" : "text-content"}`}>
                         {qualityLabel(q)}
                       </button>
                     ))}
@@ -443,20 +369,85 @@ function NativePlayer({
                 )}
               </div>
             )}
-
-            <button
-              onClick={toggleFullscreen}
-              className="text-white hover:text-primary transition-colors"
-            >
-              {isFullscreen ? (
-                <Minimize className="w-5 h-5" />
-              ) : (
-                <Maximize className="w-5 h-5" />
-              )}
+            <button onClick={toggleFullscreen} className="text-white hover:text-primary transition-colors">
+              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
             </button>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   EPORNER IFRAME PLAYER
+   Uses a sandboxed iframe to prevent the eporner player from
+   injecting clickable overlay links that navigate away.
+   allow-scripts + allow-same-origin are required for playback.
+   allow-popups and allow-top-navigation are intentionally omitted
+   so overlay ad/link clicks do nothing.
+───────────────────────────────────────────────────────────── */
+function EpornerPlayer({ src, title }: { src: string; title: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onChange = () => {
+      const isFs = !!document.fullscreenElement;
+      setIsFullscreen(isFs);
+      if (isFs) {
+        screen.orientation?.lock?.("landscape").catch(() => {});
+        document.documentElement.classList.add("fullscreen-video");
+      } else {
+        screen.orientation?.unlock?.();
+        document.documentElement.classList.remove("fullscreen-video");
+      }
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    if (!document.fullscreenElement) await containerRef.current?.requestFullscreen?.();
+    else await document.exitFullscreen?.();
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className={`w-full bg-black relative ${
+        isFullscreen
+          ? "fixed inset-0 z-[9999] h-screen w-screen rounded-none"
+          : "aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
+      }`}
+    >
+      <iframe
+        src={src}
+        className="w-full h-full border-0"
+        /*
+         * sandbox restricts what the iframe can do:
+         * - allow-scripts   : required for the video player JS to run
+         * - allow-same-origin: required for the player to load its own resources
+         *
+         * Intentionally NOT included:
+         * - allow-popups          : blocks overlay links opening new tabs
+         * - allow-top-navigation  : blocks overlay links navigating the main page
+         * - allow-forms           : not needed
+         */
+        sandbox="allow-scripts allow-same-origin"
+        allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        title={title}
+      />
+
+      {/* Fullscreen button overlay — since iframe swallows clicks we put our own */}
+      <button
+        onClick={toggleFullscreen}
+        className="absolute bottom-3 right-3 z-30 bg-black/60 hover:bg-black/80 text-white rounded-lg p-2 transition-colors"
+        title="Fullscreen"
+      >
+        {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+      </button>
     </div>
   );
 }
@@ -469,19 +460,10 @@ export default function VideoPlayer({ src, type, title, videoId }: VideoPlayerPr
     return <HQPornerPlayer src={src} title={title} videoId={videoId} />;
   }
 
-  if (type !== "mp4") {
-    return (
-      <div className="w-full aspect-video bg-black rounded-2xl overflow-hidden relative shadow-xl border border-border-subtle">
-        <iframe
-          src={src}
-          className="w-full h-full border-0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          title={title}
-        />
-      </div>
-    );
+  if (type === "mp4") {
+    return <NativePlayer src={src} title={title} />;
   }
 
-  return <NativePlayer src={src} title={title} />;
+  // eporner and all other iframe-based sources
+  return <EpornerPlayer src={src} title={title} />;
 }

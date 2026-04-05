@@ -1,27 +1,50 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { motion } from "motion/react";
 
 const isMobile = window.innerWidth < 768;
-
-/*
- * import.meta.env.BASE_URL resolves correctly in both:
- *   browser   → "/"           → "/welcome.mp4"
- *   Capacitor → "/android_asset/www/" or similar → correct bundle path
- *
- * Make sure welcome.mp4 is in frontend/public/welcome.mp4
- */
-const VIDEO_SRC = `${import.meta.env.BASE_URL}welcome.mp4`;
 
 interface WelcomeProps {
   onComplete: () => void;
 }
 
 export default function Welcome({ onComplete }: WelcomeProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      onComplete();
-    }, 4000);
+    const timer = setTimeout(() => onComplete(), 4000);
     return () => clearTimeout(timer);
+  }, [onComplete]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.muted  = true;
+    video.volume = 0;
+
+    // Load explicitly before playing — required in Capacitor WebView
+    video.load();
+
+    const tryPlay = () => {
+      const p = video.play();
+      if (p !== undefined) {
+        p.catch(() => {
+          // Autoplay blocked even after load — skip welcome, go to app
+          onComplete();
+        });
+      }
+    };
+
+    // If already have enough data, play immediately; otherwise wait
+    if (video.readyState >= 3) {
+      tryPlay();
+    } else {
+      video.addEventListener("canplay", tryPlay, { once: true });
+    }
+
+    return () => {
+      video.removeEventListener("canplay", tryPlay);
+    };
   }, [onComplete]);
 
   return (
@@ -35,13 +58,13 @@ export default function Welcome({ onComplete }: WelcomeProps) {
       <motion.div
         className="absolute inset-0 flex items-center justify-center origin-center"
         animate={{
-          scale: [0.8, 1, 1, 15],
+          scale:   [0.8, 1, 1, 15],
           opacity: [0, 1, 1, 0],
         }}
         transition={{
-          times: [0, 0.2, 0.6, 1],
+          times:    [0, 0.2, 0.6, 1],
           duration: 4,
-          ease: "easeInOut",
+          ease:     "easeInOut",
         }}
         style={{
           transformOrigin: isMobile ? "50% 53%" : "53% 60%",
@@ -49,10 +72,17 @@ export default function Welcome({ onComplete }: WelcomeProps) {
       >
         <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
           <video
-            src={VIDEO_SRC}
-            autoPlay
+            ref={videoRef}
+            /*
+             * Do NOT use import.meta.env.BASE_URL — in Capacitor it resolves
+             * to capacitor://localhost/ which the WebView cannot fetch from.
+             * A plain filename with no leading slash is resolved relative to
+             * the bundle root (same folder as index.html) in both browser and APK.
+             */
+            src="welcome.mp4"
             muted
             playsInline
+            preload="auto"
             loop
             className="w-full h-full object-cover"
           />
@@ -63,15 +93,15 @@ export default function Welcome({ onComplete }: WelcomeProps) {
         className="absolute inset-0 flex items-center justify-center pointer-events-none"
         animate={{
           opacity: [0, 1, 1, 0],
-          scale: [0.9, 1, 1, 1.2],
+          scale:   [0.9, 1, 1, 1.2],
         }}
         transition={{
-          times: [0, 0.2, 0.6, 1],
+          times:    [0, 0.2, 0.6, 1],
           duration: 4,
-          ease: "easeInOut",
+          ease:     "easeInOut",
         }}
       >
-        <h1 className="text-6xl md:text-8xl font-bold text-white tracking-widest drop-shadow-2xl"></h1>
+        <h1 className="text-6xl md:text-8xl font-bold text-white tracking-widest drop-shadow-2xl" />
       </motion.div>
     </motion.div>
   );

@@ -23,7 +23,27 @@
   --theme-primary-hover: color-mix(in srgb, var(--theme-primary), black 15%);
   --theme-primary-light: color-mix(in srgb, var(--theme-primary), transparent 90%);
 }
+html.fullscreen-video,
+html.fullscreen-video body {
+  margin: 0 !important;
+  padding: 0 !important;
+  /* Ignore safe areas — we want to cover the status bar */
+  padding-top: env(safe-area-inset-top, 0) !important;
+  background: black !important;
+}
 
+/* Hide anything outside the video container in fullscreen */
+html.fullscreen-video :not(:fullscreen):not(:fullscreen *) {
+  visibility: hidden;
+}
+
+/* The fullscreen element itself must be fully visible */
+html.fullscreen-video :fullscreen {
+  visibility: visible;
+  background: black;
+  width: 100vw;
+  height: 100vh;
+}
 .dark {
   --theme-background: #0e0e0e;
   --theme-surface: #1c1c1c;
