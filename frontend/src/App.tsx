@@ -22,9 +22,7 @@ import axios from "axios";
 const IS_NATIVE = !!(window as any).Capacitor?.isNativePlatform?.();
 
 /* ─────────────────────────────────────────────────────────
-   BACKEND BOOT LOADER
-   Native app only. Shows while VideoFeed fetches page 1
-   when there is no cached content.
+   BACKEND BOOT LOADER — native app only, no cache, post-login
 ───────────────────────────────────────────────────────── */
 const BOOT_SECONDS = 120;
 
@@ -85,6 +83,15 @@ function BackendBootLoader() {
 }
 
 /* ─────────────────────────────────────────────────────────
+   Helper — get token from sessionStorage
+   sessionStorage is cleared automatically when the app/tab closes,
+   so the user always has to log in again on next open.
+───────────────────────────────────────────────────────── */
+function getToken() {
+  return sessionStorage.getItem("token") || "";
+}
+
+/* ─────────────────────────────────────────────────────────
    APP
 ───────────────────────────────────────────────────────── */
 export default function App() {
@@ -110,9 +117,14 @@ export default function App() {
 
   const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
 
-  /* ── Always require login — clear any leftover token ── */
+  /*
+   * Clear sessionStorage token on mount — this runs once when the app loads.
+   * sessionStorage already clears itself when the browser/app closes,
+   * but this ensures a fresh login if the page is refreshed too.
+   */
   useEffect(() => {
-    localStorage.removeItem("token");
+    sessionStorage.removeItem("token");
+    localStorage.removeItem("token"); // clean up old localStorage tokens
   }, []);
 
   /* ── Brief branded splash (1.5 s) ── */
@@ -132,7 +144,7 @@ export default function App() {
   /* ── Load creators + interactions after login ── */
   useEffect(() => {
     if (!isLoggedIn) return;
-    const token   = localStorage.getItem("token");
+    const token   = getToken();
     const headers = { Authorization: `Bearer ${token}` };
 
     axios
@@ -140,36 +152,26 @@ export default function App() {
       .then((res) => setCreators(res.data.creators || []))
       .catch((err) => console.error("Creators fetch error:", err));
 
-    axios
-      .get(`${API_BASE}/user/interactions`, { headers })
-      .then((res) => {
-        setSavedVideoIds(res.data.savedVideoIds || []);
-        setLikedVideoIds(res.data.likedVideoIds || []);
-      })
-      .catch((err) => console.error("Interactions fetch error:", err));
+    // Only fetch interactions if we have a token
+    if (token) {
+      axios
+        .get(`${API_BASE}/user/interactions`, { headers })
+        .then((res) => {
+          setSavedVideoIds(res.data.savedVideoIds || []);
+          setLikedVideoIds(res.data.likedVideoIds || []);
+        })
+        .catch((err) => console.error("Interactions fetch error:", err));
+    }
   }, [isLoggedIn, API_BASE]);
 
-  /*
-   * ── handleLogin ──
-   * fromCache = true  → user entered app instantly (cache existed),
-   *                     skip boot loader entirely
-   * fromCache = false → no cache, show boot loader on native until
-   *                     VideoFeed delivers first videos
-   */
   const handleLogin = useCallback((fromCache: boolean) => {
     setIsLoggedIn(true);
     setShowWelcome(true);
-    // Only show boot loader on native app AND when there was no cache
     if (IS_NATIVE && !fromCache) {
       setIsBootLoading(true);
     }
   }, []);
 
-  /*
-   * ── handleVideosSeen ──
-   * Called by VideoFeed when first videos arrive.
-   * Dismisses boot loader and records videos for the session.
-   */
   const handleVideosSeen = useCallback((videos: Video[]) => {
     setIsBootLoading(false);
     setSeenVideos((prev) => {
@@ -181,7 +183,7 @@ export default function App() {
 
   const handleAuthError = (err: unknown) => {
     if (axios.isAxiosError(err) && err.response?.status === 401) {
-      localStorage.removeItem("token");
+      sessionStorage.removeItem("token");
       setIsLoggedIn(false);
       setShowWelcome(false);
     }
@@ -196,7 +198,7 @@ export default function App() {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
     try {
-      const token = localStorage.getItem("token");
+      const token = getToken();
       const res = await axios.post(
         `${API_BASE}/user/save/${id}`,
         { video: video || null },
@@ -206,6 +208,7 @@ export default function App() {
     } catch (err) {
       console.error("Save toggle error:", err);
       handleAuthError(err);
+      // Revert optimistic update on error
       setSavedVideoIds((prev) =>
         prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
       );
@@ -217,7 +220,7 @@ export default function App() {
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
     try {
-      const token = localStorage.getItem("token");
+      const token = getToken();
       const res = await axios.post(
         `${API_BASE}/user/like/${id}`,
         { video: video || null },
@@ -256,7 +259,6 @@ export default function App() {
           </motion.div>
 
         ) : !isLoggedIn ? (
-          /* 2. Login — always required */
           <Login key="login" onLogin={handleLogin} />
 
         ) : showWelcome ? (
@@ -269,13 +271,6 @@ export default function App() {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.3 }}
           >
-            {/*
-              3. Boot loader overlay:
-              - Native app only
-              - Only when no cache existed at login time
-              - VideoFeed is mounted and fetching BEHIND this overlay
-              - Dismissed when handleVideosSeen fires
-            */}
             <AnimatePresence>
               {isBootLoading && <BackendBootLoader key="boot" />}
             </AnimatePresence>

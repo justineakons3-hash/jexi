@@ -6,10 +6,6 @@ import axios from "axios";
 import { hasFreshCache } from "../utils/videoCache";
 
 interface LoginProps {
-  /**
-   * fromCache = true  → caller should skip boot loader (cached videos available)
-   * fromCache = false → no cache, full cold-boot wait
-   */
   onLogin: (fromCache: boolean) => void;
 }
 
@@ -41,38 +37,42 @@ export default function Login({ onLogin }: LoginProps) {
 
     if (cached) {
       /*
-       * Cache exists → let the user into the app instantly.
-       * Auth still fires in the background so the token is available
-       * for save/like interactions, but we don't wait for it.
+       * Cache exists → enter app instantly, auth in background.
+       * Token saved to sessionStorage so it's available for save/like
+       * calls during this session, but cleared when app is closed.
        */
-      onLogin(true); // enters app immediately — no "Signing in…" wait
+      onLogin(true);
 
-      // Fire-and-forget auth — result doesn't block UI
       axios
         .post(`${API_BASE}/auth/login`, { email: username, password })
+        .then((res) => {
+          if (res.data?.token) {
+            sessionStorage.setItem("token", res.data.token);
+          }
+        })
         .catch((err) => console.warn("Background auth failed:", err));
 
-      return; // setLoading(false) not needed — component will unmount
+      return;
     }
 
-    /*
-     * No cache → must wait for auth before entering so we can show
-     * the boot loader while VideoFeed fetches fresh content.
-     */
+    // No cache → wait for auth before entering
     try {
       const res = await axios.post(`${API_BASE}/auth/login`, {
         email: username,
         password,
       });
       if (res.status === 200) {
-        onLogin(false); // enters app, boot loader will show
+        // Save token to sessionStorage — survives the session, cleared on app close
+        if (res.data?.token) {
+          sessionStorage.setItem("token", res.data.token);
+        }
+        onLogin(false);
       }
     } catch (err) {
       console.error("Login failed:", err);
       setError("Invalid username or password. Please try again.");
       setLoading(false);
     }
-    // Note: don't call setLoading(false) on success — component unmounts
   };
 
   return (

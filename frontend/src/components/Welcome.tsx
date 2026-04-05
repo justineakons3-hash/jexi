@@ -1,6 +1,17 @@
 import { useEffect } from "react";
 import { motion } from "motion/react";
+
 const isMobile = window.innerWidth < 768;
+
+/*
+ * import.meta.env.BASE_URL resolves correctly in both:
+ *   browser   → "/"           → "/welcome.mp4"
+ *   Capacitor → "/android_asset/www/" or similar → correct bundle path
+ *
+ * Make sure welcome.mp4 is in frontend/public/welcome.mp4
+ */
+const VIDEO_SRC = `${import.meta.env.BASE_URL}welcome.mp4`;
+
 interface WelcomeProps {
   onComplete: () => void;
 }
@@ -9,7 +20,7 @@ export default function Welcome({ onComplete }: WelcomeProps) {
   useEffect(() => {
     const timer = setTimeout(() => {
       onComplete();
-    }, 4000); // 4 seconds total
+    }, 4000);
     return () => clearTimeout(timer);
   }, [onComplete]);
 
@@ -38,9 +49,10 @@ export default function Welcome({ onComplete }: WelcomeProps) {
       >
         <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
           <video
-            src="./welcome.mp4"
+            src={VIDEO_SRC}
             autoPlay
             muted
+            playsInline
             loop
             className="w-full h-full object-cover"
           />
