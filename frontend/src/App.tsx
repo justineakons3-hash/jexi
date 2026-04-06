@@ -88,6 +88,7 @@ export default function App() {
 
   // Token stored in a ref so it's always current without triggering re-renders
   const tokenRef = useRef<string>("");
+  const emailRef = useRef<string>("");
 
   const getToken = () => tokenRef.current;
 
@@ -140,23 +141,24 @@ export default function App() {
    * On no-cache path:
    *   1 call: token=JWT fromCache=false → enter app, start boot loader
    */
-  const handleLogin = useCallback((token: string, fromCache: boolean) => {
-    if (token) {
-      // Store token in ref — available synchronously for all API calls
-      tokenRef.current = token;
-      // Fetch interactions now that we have a real token
-      fetchInteractions(token);
-    }
-
-    if (!isLoggedIn) {
-      // First call — transition to logged-in state
-      setIsLoggedIn(true);
-      setShowWelcome(true);
-      if (IS_NATIVE && !fromCache) {
-        setIsBootLoading(true);
+  const handleLogin = useCallback(
+    (token: string, fromCache: boolean, email?: string) => {
+      if (email) emailRef.current = email;
+      if (token) {
+        tokenRef.current = token;
+        fetchInteractions(token);
       }
-    }
-  }, [isLoggedIn, fetchInteractions]);
+
+      if (!isLoggedIn) {
+        setIsLoggedIn(true);
+        setShowWelcome(true);
+        if (IS_NATIVE && !fromCache) {
+          setIsBootLoading(true);
+        }
+      }
+    },
+    [isLoggedIn, fetchInteractions],
+  );
 
   const handleVideosSeen = useCallback((videos: Video[]) => {
     setIsBootLoading(false);
@@ -231,17 +233,27 @@ export default function App() {
             exit={{ opacity: 0, scale: 1.1 }}
             transition={{ duration: 0.5 }}
           >
-            <img src={LOADING_GIF_PATH} alt="Loading..." className="w-24 h-24 object-contain" />
+            <img
+              src={LOADING_GIF_PATH}
+              alt="Loading..."
+              className="w-24 h-24 object-contain"
+            />
           </motion.div>
-
         ) : !isLoggedIn ? (
           <Login key="login" onLogin={handleLogin} />
-
         ) : showWelcome ? (
-          <Welcome key="welcome" onComplete={handleWelcomeComplete} />
-
+          <Welcome
+            key="welcome"
+            onComplete={handleWelcomeComplete}
+            userEmail={emailRef.current}
+          />
         ) : (
-          <motion.div key="app" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+          <motion.div
+            key="app"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3 }}
+          >
             <AnimatePresence>
               {isBootLoading && <BackendBootLoader key="boot" />}
             </AnimatePresence>

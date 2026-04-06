@@ -1,25 +1,22 @@
 import { useEffect, useRef } from "react";
 import { motion } from "motion/react";
-
-/*
- * Import the video as a Vite asset.
- * This means welcome.mp4 STAYS in frontend/src/assets/welcome.mp4 permanently.
- * You never need to remove/add it around builds.
- * Vite hashes and bundles it automatically — works in both browser and APK.
- *
- * SETUP: Move welcome.mp4 to frontend/src/assets/welcome.mp4
- * (create the assets folder if it doesn't exist)
- */
 import welcomeVideo from "../assets/welcome.mp4";
+import welcome2Video from "../assets/welcome2.mp4";
 
 const isMobile = window.innerWidth < 768;
+const UMA_EMAIL = "uma@gmail.com";
 
 interface WelcomeProps {
   onComplete: () => void;
+  userEmail?: string;
 }
 
-export default function Welcome({ onComplete }: WelcomeProps) {
+export default function Welcome({ onComplete, userEmail }: WelcomeProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const src =
+    userEmail?.toLowerCase().trim() === UMA_EMAIL
+      ? welcomeVideo
+      : welcome2Video;
 
   useEffect(() => {
     const timer = setTimeout(() => onComplete(), 4000);
@@ -30,12 +27,12 @@ export default function Welcome({ onComplete }: WelcomeProps) {
     const video = videoRef.current;
     if (!video) return;
 
-    video.muted  = true;
+    video.muted = true;
     video.volume = 0;
     video.load();
 
     const tryPlay = () => {
-      video.play().catch(() => onComplete()); // if blocked, skip to app
+      video.play().catch(() => onComplete());
     };
 
     if (video.readyState >= 3) {
@@ -45,7 +42,7 @@ export default function Welcome({ onComplete }: WelcomeProps) {
     }
 
     return () => video.removeEventListener("canplay", tryPlay);
-  }, [onComplete]);
+  }, [onComplete, src]); // re-run if src changes
 
   return (
     <motion.div
@@ -64,7 +61,7 @@ export default function Welcome({ onComplete }: WelcomeProps) {
         <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
           <video
             ref={videoRef}
-            src={welcomeVideo}
+            src={src}
             muted
             playsInline
             preload="auto"

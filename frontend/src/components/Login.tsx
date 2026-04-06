@@ -7,7 +7,7 @@ import { hasFreshCache } from "../utils/videoCache";
 
 interface LoginProps {
   /** token = JWT string; fromCache = whether cached videos exist */
-  onLogin: (token: string, fromCache: boolean) => void;
+  onLogin: (token: string, fromCache: boolean, email?: string) => void;
 }
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
@@ -40,15 +40,14 @@ export default function Login({ onLogin }: LoginProps) {
        * We call onLogin("", true) immediately so the UI doesn't block,
        * then fire the real auth and call onLogin again once token arrives.
        */
-      onLogin("", true); // enter immediately with no token yet
+      onLogin("", true, username.trim()); // pass email immediately // enter immediately with no token yet
 
       axios
         .post(`${API_BASE}/auth/login`, { email: username, password })
         .then((res) => {
           const token = res.data?.token || "";
           if (token) {
-            // Deliver token to App so it can fetch interactions
-            onLogin(token, true);
+            onLogin(token, true, username.trim());
           }
         })
         .catch((err) => console.warn("Background auth failed:", err));
@@ -64,7 +63,7 @@ export default function Login({ onLogin }: LoginProps) {
       });
       if (res.status === 200) {
         const token = res.data?.token || "";
-        onLogin(token, false);
+        onLogin(token, false, username.trim());
       }
     } catch (err) {
       console.error("Login failed:", err);
