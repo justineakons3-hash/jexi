@@ -25,28 +25,6 @@
 }
 html.fullscreen-video,
 html.fullscreen-video body {
-  margin: 0 !important;
-  padding: 0 !important;
-  /* Ignore safe areas — we want to cover the status bar */
-  padding-top: env(safe-area-inset-top, 0) !important;
-  background: black !important;
-}
-
-/* Hide anything outside the video container in fullscreen */
-html.fullscreen-video :not(:fullscreen):not(:fullscreen *) {
-  visibility: hidden;
-}
-
-/* The fullscreen element itself must be fully visible */
-html.fullscreen-video :fullscreen {
-  visibility: visible;
-  background: black;
-  width: 100vw;
-  height: 100vh;
-}
-/* Android Capacitor fake fullscreen */
-html.fullscreen-video,
-html.fullscreen-video body {
   overflow: hidden;
 }
 

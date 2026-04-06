@@ -119,29 +119,27 @@ function NativePlayer({
   title: string;
   qualityMap?: QualityMap;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef     = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const availableQualities = Object.keys(qualityMap).sort(
-    (a, b) => parseInt(b) - parseInt(a),
-  );
+  const availableQualities = Object.keys(qualityMap).sort((a, b) => parseInt(b) - parseInt(a));
   const hasQualities = availableQualities.length > 0;
 
-  const [quality, setQuality] = useState(availableQualities[0] || "auto");
-  const [activeSrc, setActiveSrc] = useState(src);
+  const [quality, setQuality]           = useState(availableQualities[0] || "auto");
+  const [activeSrc, setActiveSrc]       = useState(src);
   const [showSettings, setShowSettings] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [isPlaying, setIsPlaying]       = useState(false);
+  const [volume, setVolume]             = useState(1);
+  const [isMuted, setIsMuted]           = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [duration, setDuration]         = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  const [isBuffering, setIsBuffering] = useState(false);
+  const [isBuffering, setIsBuffering]   = useState(false);
 
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTapTimeRef = useRef<number>(0);
-  const savedTimeRef = useRef<number>(0);
+  const lastTapTimeRef     = useRef<number>(0);
+  const savedTimeRef       = useRef<number>(0);
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
@@ -151,18 +149,13 @@ function NativePlayer({
 
   const togglePlay = useCallback(() => {
     if (!videoRef.current) return;
-    videoRef.current.paused
-      ? videoRef.current.play()
-      : videoRef.current.pause();
+    videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
     resetControlsTimer();
   }, [resetControlsTimer]);
 
   const switchQuality = (q: string) => {
     const newUrl = qualityMap[q];
-    if (!newUrl || newUrl === activeSrc) {
-      setShowSettings(false);
-      return;
-    }
+    if (!newUrl || newUrl === activeSrc) { setShowSettings(false); return; }
     if (videoRef.current) savedTimeRef.current = videoRef.current.currentTime;
     setQuality(q);
     setActiveSrc(newUrl);
@@ -172,10 +165,7 @@ function NativePlayer({
   useEffect(() => {
     const v = videoRef.current;
     if (!v || savedTimeRef.current === 0) return;
-    const onLoaded = () => {
-      v.currentTime = savedTimeRef.current;
-      v.play().catch(() => {});
-    };
+    const onLoaded = () => { v.currentTime = savedTimeRef.current; v.play().catch(() => {}); };
     v.addEventListener("loadedmetadata", onLoaded, { once: true });
     return () => v.removeEventListener("loadedmetadata", onLoaded);
   }, [activeSrc]);
@@ -183,37 +173,23 @@ function NativePlayer({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === "INPUT") return;
-      if (e.key === " " || e.key === "k") {
-        e.preventDefault();
-        togglePlay();
-      }
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        if (videoRef.current) videoRef.current.currentTime += 5;
-      }
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        if (videoRef.current) videoRef.current.currentTime -= 5;
-      }
+      if (e.key === " " || e.key === "k") { e.preventDefault(); togglePlay(); }
+      if (e.key === "ArrowRight") { e.preventDefault(); if (videoRef.current) videoRef.current.currentTime += 5; }
+      if (e.key === "ArrowLeft")  { e.preventDefault(); if (videoRef.current) videoRef.current.currentTime -= 5; }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePlay]);
 
-  /* ── Fullscreen state sync ── */
   /* ── Fullscreen state sync (browser only — native uses CSS fake fullscreen) ── */
   useEffect(() => {
-    if (IS_NATIVE) return; // handled manually in toggleFullscreen
+    if (IS_NATIVE) return;
     const onFsChange = () => {
-      const isFs = !!(
-        document.fullscreenElement || (document as any).webkitFullscreenElement
-      );
+      const isFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
       setIsFullscreen(isFs);
       if (!isFs) {
         document.documentElement.classList.remove("fullscreen-video");
-        try {
-          screen.orientation?.unlock?.();
-        } catch {}
+        try { screen.orientation?.unlock?.(); } catch {}
       }
     };
     document.addEventListener("fullscreenchange", onFsChange);
@@ -224,27 +200,40 @@ function NativePlayer({
     };
   }, []);
 
+  /* ── Reattach video surface after CSS layout change (Android WebView fix) ── */
+  const reattachVideoSurface = useCallback(() => {
+    setTimeout(() => {
+      const v = videoRef.current;
+      if (!v) return;
+      const t      = v.currentTime;
+      const paused = v.paused;
+      const src    = v.src;
+      v.src = "";
+      v.load();
+      v.src = src;
+      v.load();
+      v.currentTime = t;
+      if (!paused) v.play().catch(() => {});
+    }, 300); // 300ms lets CSS fixed layout fully settle before reattach
+  }, []);
+
   const toggleFullscreen = async () => {
     if (isFullscreen) {
-      // Exit
+      // ── Exit fullscreen ──
       if (IS_NATIVE) {
-        // CSS fake-fullscreen exit
         try {
-          const { ScreenOrientation } =
-            await import("@capacitor/screen-orientation");
+          const { ScreenOrientation } = await import("@capacitor/screen-orientation");
           await ScreenOrientation.unlock();
         } catch {
-          try {
-            await screen.orientation?.unlock?.();
-          } catch {}
+          try { await (screen.orientation as any)?.unlock?.(); } catch {}
         }
         document.documentElement.classList.remove("fullscreen-video");
         setIsFullscreen(false);
+        reattachVideoSurface(); // reattach after returning to portrait layout
       } else {
         try {
           if (document.exitFullscreen) await document.exitFullscreen();
-          else if ((document as any).webkitExitFullscreen)
-            await (document as any).webkitExitFullscreen();
+          else if ((document as any).webkitExitFullscreen) await (document as any).webkitExitFullscreen();
         } catch {}
         document.documentElement.classList.remove("fullscreen-video");
         setIsFullscreen(false);
@@ -252,29 +241,26 @@ function NativePlayer({
       return;
     }
 
-    // Enter fullscreen
+    // ── Enter fullscreen ──
     if (IS_NATIVE) {
-      // Android WebView: requestFullscreen on a div causes black screen.
-      // Use CSS fixed positioning instead — fully reliable in Capacitor.
+      // requestFullscreen() on a div causes black screen in Capacitor WebView.
+      // Status bar + nav bars are already hidden app-wide via MainActivity.java.
+      // Use CSS fixed positioning + orientation lock instead.
       try {
-        const { ScreenOrientation } =
-          await import("@capacitor/screen-orientation");
+        const { ScreenOrientation } = await import("@capacitor/screen-orientation");
         await ScreenOrientation.lock({ orientation: "landscape" });
       } catch {
-        try {
-          await screen.orientation?.lock?.("landscape" as OrientationLockType);
-        } catch {}
+        try { await (screen.orientation as any)?.lock?.("landscape"); } catch {}
       }
       document.documentElement.classList.add("fullscreen-video");
       setIsFullscreen(true);
+      reattachVideoSurface(); // reattach after CSS transitions to new landscape surface
     } else {
-      // Desktop / browser — real fullscreen API
       const el = containerRef.current;
       if (!el) return;
       try {
         if (el.requestFullscreen) await el.requestFullscreen();
-        else if ((el as any).webkitRequestFullscreen)
-          await (el as any).webkitRequestFullscreen();
+        else if ((el as any).webkitRequestFullscreen) await (el as any).webkitRequestFullscreen();
         document.documentElement.classList.add("fullscreen-video");
         setIsFullscreen(true);
       } catch (err) {
@@ -285,11 +271,9 @@ function NativePlayer({
 
   const handleVideoClick = () => {
     if (window.matchMedia("(pointer: coarse)").matches) {
-      // Mobile: single tap toggles controls visibility
       if (showControls) {
         setShowControls(false);
-        if (controlsTimeoutRef.current)
-          clearTimeout(controlsTimeoutRef.current);
+        if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
       } else {
         resetControlsTimer();
       }
@@ -300,12 +284,7 @@ function NativePlayer({
 
   const handleTouchStart = (e: React.TouchEvent) => {
     const now = Date.now();
-    if (
-      now - lastTapTimeRef.current < 300 &&
-      videoRef.current &&
-      containerRef.current
-    ) {
-      // Double tap — seek
+    if (now - lastTapTimeRef.current < 300 && videoRef.current && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
       videoRef.current.currentTime +=
         e.touches[0].clientX - rect.left > rect.width / 2 ? 10 : -10;
@@ -334,15 +313,14 @@ function NativePlayer({
     setVolume(v);
     if (videoRef.current) {
       videoRef.current.volume = v;
-      videoRef.current.muted = v === 0;
+      videoRef.current.muted  = v === 0;
       setIsMuted(v === 0);
     }
   };
 
   const formatTime = (t: number) => {
     if (isNaN(t)) return "0:00";
-    const m = Math.floor(t / 60),
-      s = Math.floor(t % 60);
+    const m = Math.floor(t / 60), s = Math.floor(t % 60);
     return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
@@ -362,9 +340,7 @@ function NativePlayer({
           : "w-full aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
       }`}
       onMouseMove={resetControlsTimer}
-      onMouseLeave={() => {
-        if (isPlaying) setShowControls(false);
-      }}
+      onMouseLeave={() => { if (isPlaying) setShowControls(false); }}
     >
       <video
         ref={videoRef}
@@ -372,18 +348,11 @@ function NativePlayer({
         className="w-full h-full object-contain"
         onTimeUpdate={() => {
           if (videoRef.current)
-            setProgress(
-              (videoRef.current.currentTime / videoRef.current.duration) * 100,
-            );
+            setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
         }}
-        onLoadedMetadata={() => {
-          if (videoRef.current) setDuration(videoRef.current.duration);
-        }}
+        onLoadedMetadata={() => { if (videoRef.current) setDuration(videoRef.current.duration); }}
         onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => {
-          setIsBuffering(false);
-          setIsPlaying(true);
-        }}
+        onPlaying={() => { setIsBuffering(false); setIsPlaying(true); }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onClick={handleVideoClick}
@@ -394,11 +363,7 @@ function NativePlayer({
 
       {isBuffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10 pointer-events-none">
-          <img
-            src={LOADING_GIF_PATH}
-            alt="Buffering"
-            className="w-16 h-16 object-contain"
-          />
+          <img src={LOADING_GIF_PATH} alt="Buffering" className="w-16 h-16 object-contain" />
         </div>
       )}
 
@@ -407,102 +372,56 @@ function NativePlayer({
         className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-16 pb-4 transition-opacity duration-300 z-20 ${
           showControls ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
-        onTouchStart={(e) =>
-          e.stopPropagation()
-        } /* prevent touch falling through to video */
+        onTouchStart={(e) => e.stopPropagation()}
       >
         {/* Progress */}
         <div className="mb-4">
           <input
-            type="range"
-            min="0"
-            max="100"
-            value={progress}
+            type="range" min="0" max="100" value={progress}
             onChange={handleSeek}
             onClick={(e) => e.stopPropagation()}
             className="w-full h-1 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
-            style={{
-              background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)`,
-            }}
+            style={{ background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)` }}
           />
         </div>
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (videoRef.current) videoRef.current.currentTime -= 10;
-                resetControlsTimer();
-              }}
-              onClick={() => {
-                if (videoRef.current) videoRef.current.currentTime -= 10;
-              }}
+              onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); if (videoRef.current) videoRef.current.currentTime -= 10; resetControlsTimer(); }}
+              onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 10; }}
               className="text-white hover:text-primary transition-colors"
             >
               <Rewind className="w-5 h-5" />
             </button>
             <button
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                togglePlay();
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                togglePlay();
-              }}
+              onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); togglePlay(); }}
+              onClick={(e) => { e.stopPropagation(); togglePlay(); }}
               className="text-white hover:text-primary transition-colors"
             >
-              {isPlaying ? (
-                <Pause className="w-6 h-6" />
-              ) : (
-                <Play className="w-6 h-6" />
-              )}
+              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
             </button>
             <button
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (videoRef.current) videoRef.current.currentTime += 10;
-                resetControlsTimer();
-              }}
-              onClick={() => {
-                if (videoRef.current) videoRef.current.currentTime += 10;
-              }}
+              onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); if (videoRef.current) videoRef.current.currentTime += 10; resetControlsTimer(); }}
+              onClick={() => { if (videoRef.current) videoRef.current.currentTime += 10; }}
               className="text-white hover:text-primary transition-colors"
             >
               <FastForward className="w-5 h-5" />
             </button>
             <div className="hidden md:flex items-center gap-2 group/vol">
-              <button
-                onClick={toggleMute}
-                className="text-white hover:text-primary transition-colors"
-              >
-                {isMuted || volume === 0 ? (
-                  <VolumeX className="w-5 h-5" />
-                ) : (
-                  <Volume2 className="w-5 h-5" />
-                )}
+              <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
+                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
               </button>
               <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={isMuted ? 0 : volume}
+                type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
                 onChange={handleVolumeChange}
                 onClick={(e) => e.stopPropagation()}
                 className="w-20 h-1 rounded-full appearance-none cursor-pointer hidden group-hover/vol:block [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                style={{
-                  background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)`,
-                }}
+                style={{ background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)` }}
               />
             </div>
             <span className="text-white/90 text-sm font-medium">
-              {formatTime(videoRef.current?.currentTime || 0)} /{" "}
-              {formatTime(duration)}
+              {formatTime(videoRef.current?.currentTime || 0)} / {formatTime(duration)}
             </span>
           </div>
 
@@ -514,21 +433,13 @@ function NativePlayer({
                   className="text-white hover:text-primary transition-colors flex items-center gap-1"
                 >
                   <Settings className="w-5 h-5" />
-                  <span className="text-xs font-bold">
-                    {qualityLabel(quality)}
-                  </span>
+                  <span className="text-xs font-bold">{qualityLabel(quality)}</span>
                 </button>
                 {showSettings && (
                   <div className="absolute bottom-full right-0 mb-4 bg-surface/95 backdrop-blur-md border border-border-subtle rounded-xl py-2 min-w-[120px] shadow-2xl z-50">
-                    <div className="px-3 py-1 text-xs font-semibold text-content-muted uppercase tracking-wider border-b border-border-subtle mb-1">
-                      Quality
-                    </div>
+                    <div className="px-3 py-1 text-xs font-semibold text-content-muted uppercase tracking-wider border-b border-border-subtle mb-1">Quality</div>
                     {availableQualities.map((q) => (
-                      <button
-                        key={q}
-                        onClick={() => switchQuality(q)}
-                        className={`w-full text-left px-4 py-2 text-sm hover:bg-white/10 transition-colors ${quality === q ? "text-primary font-bold" : "text-content"}`}
-                      >
+                      <button key={q} onClick={() => switchQuality(q)} className={`w-full text-left px-4 py-2 text-sm hover:bg-white/10 transition-colors ${quality === q ? "text-primary font-bold" : "text-content"}`}>
                         {qualityLabel(q)}
                       </button>
                     ))}
@@ -537,22 +448,11 @@ function NativePlayer({
               </div>
             )}
             <button
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                toggleFullscreen();
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleFullscreen();
-              }}
+              onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); }}
+              onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
               className="text-white hover:text-primary transition-colors"
             >
-              {isFullscreen ? (
-                <Minimize className="w-5 h-5" />
-              ) : (
-                <Maximize className="w-5 h-5" />
-              )}
+              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
             </button>
           </div>
         </div>
@@ -581,7 +481,7 @@ function EpornerPlayer({ src, title }: { src: string; title: string }) {
 
 /* ─────────────────────────────────────────────────────────────
    MAIN
-───────────────────────────────────────────────────────── */
+───────────────────────────────────────────────────────────── */
 export default function VideoPlayer({ src, type, title, videoId }: VideoPlayerProps) {
   if (type === "hqporner") return <HQPornerPlayer src={src} title={title} videoId={videoId} />;
   if (type === "mp4") return <NativePlayer src={src} title={title} />;
