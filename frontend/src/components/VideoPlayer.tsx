@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { LOADING_GIF_PATH } from '../constants';
 import axios from 'axios';
+import { saveCdnUrl, getCdnUrl } from '../utils/videoCache';
 
 interface VideoPlayerProps {
   src: string;
@@ -15,36 +16,8 @@ interface VideoPlayerProps {
 }
 
 type QualityMap = Record<string, string>;
-
 const API_BASE = import.meta.env.VITE_BACKEND_URL || "/api";
-
-/* ─────────────────────────────────────────────────────────────
-   Fullscreen helper
-   On mobile WebViews, requestFullscreen() on a div often fails.
-   webkitEnterFullscreen() on the <video> element works reliably.
-───────────────────────────────────────────────────────────── */
-function enterFullscreen(container: HTMLDivElement, video: HTMLVideoElement) {
-  const isMobile = window.matchMedia("(pointer: coarse)").matches;
-
-  if (isMobile) {
-    // Use video-native fullscreen — works in Android & iOS WebViews
-    const v = video as any;
-    if (v.webkitEnterFullscreen) {
-      v.webkitEnterFullscreen();
-      return;
-    }
-    if (v.requestFullscreen) { v.requestFullscreen(); return; }
-  }
-
-  // Desktop — use container fullscreen so our custom controls show
-  if (container.requestFullscreen) container.requestFullscreen();
-  else if ((container as any).webkitRequestFullscreen) (container as any).webkitRequestFullscreen();
-}
-
-function exitFullscreen() {
-  if (document.exitFullscreen) document.exitFullscreen();
-  else if ((document as any).webkitExitFullscreen) (document as any).webkitExitFullscreen();
-}
+const IS_NATIVE = !!(window as any).Capacitor?.isNativePlatform?.();
 
 /* ─────────────────────────────────────────────────────────────
    HQPORNER PLAYER
@@ -52,9 +25,10 @@ function exitFullscreen() {
 function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; videoId?: string }) {
   type State = "idle" | "loading" | "playing" | "error" | "deleted";
 
-  const [state, setState]             = useState<State>("idle");
-  const [cdnUrl, setCdnUrl]           = useState<string>("");
-  const [qualityMap, setQualityMap]   = useState<QualityMap>({});
+  const cached = videoId ? getCdnUrl(videoId) : null;
+  const [state, setState]             = useState<State>(cached ? "playing" : "idle");
+  const [cdnUrl, setCdnUrl]           = useState<string>(cached?.cdnUrl || "");
+  const [qualityMap, setQualityMap]   = useState<QualityMap>(cached?.qualityMap || {});
   const [errMsg, setErrMsg]           = useState<string>("");
   const [fallbackUrl, setFallbackUrl] = useState<string>("");
 
@@ -62,14 +36,15 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
     setState("loading");
     setErrMsg("");
     setFallbackUrl("");
-
     try {
       const res = await axios.post(`${API_BASE}/videos/resolve`, { pageUrl: src, videoId });
       const url = res.data?.cdnUrl;
       if (!url) throw new Error("No CDN URL returned");
-      setQualityMap(res.data?.qualityMap || {});
+      const qmap = res.data?.qualityMap || {};
+      setQualityMap(qmap);
       setCdnUrl(url);
       setState("playing");
+      if (videoId) saveCdnUrl(videoId, url, qmap);
     } catch (err: any) {
       const data     = (err?.response?.data || {}) as any;
       const fallback = data.fallbackUrl || src;
@@ -133,39 +108,61 @@ function HQPornerPlayer({ src, title, videoId }: { src: string; title: string; v
 }
 
 /* ─────────────────────────────────────────────────────────────
-   NATIVE VIDEO PLAYER  (HQPorner CDN streams + direct mp4)
+   NATIVE VIDEO PLAYER
 ───────────────────────────────────────────────────────────── */
-function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: string; qualityMap?: QualityMap }) {
-  const videoRef     = useRef<HTMLVideoElement>(null);
+function NativePlayer({
+  src,
+  title,
+  qualityMap = {},
+}: {
+  src: string;
+  title: string;
+  qualityMap?: QualityMap;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const availableQualities = Object.keys(qualityMap).sort((a, b) => parseInt(b) - parseInt(a));
+  const availableQualities = Object.keys(qualityMap).sort(
+    (a, b) => parseInt(b) - parseInt(a),
+  );
   const hasQualities = availableQualities.length > 0;
 
-  const [quality, setQuality]           = useState<string>(availableQualities[0] || "auto");
-  const [activeSrc, setActiveSrc]       = useState<string>(src);
+  const [quality, setQuality] = useState(availableQualities[0] || "auto");
+  const [activeSrc, setActiveSrc] = useState(src);
   const [showSettings, setShowSettings] = useState(false);
-  const [isPlaying, setIsPlaying]       = useState(false);
-  const [volume, setVolume]             = useState(1);
-  const [isMuted, setIsMuted]           = useState(false);
-  const [progress, setProgress]         = useState(0);
-  const [duration, setDuration]         = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  const [isBuffering, setIsBuffering]   = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
 
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTapTimeRef     = useRef<number>(0);
-  const savedTimeRef       = useRef<number>(0);
+  const lastTapTimeRef = useRef<number>(0);
+  const savedTimeRef = useRef<number>(0);
+
+  const resetControlsTimer = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3000);
+  }, []);
 
   const togglePlay = useCallback(() => {
     if (!videoRef.current) return;
-    videoRef.current.paused ? videoRef.current.play() : videoRef.current.pause();
-  }, []);
+    videoRef.current.paused
+      ? videoRef.current.play()
+      : videoRef.current.pause();
+    resetControlsTimer();
+  }, [resetControlsTimer]);
 
   const switchQuality = (q: string) => {
     const newUrl = qualityMap[q];
-    if (!newUrl || newUrl === activeSrc) { setShowSettings(false); return; }
+    if (!newUrl || newUrl === activeSrc) {
+      setShowSettings(false);
+      return;
+    }
     if (videoRef.current) savedTimeRef.current = videoRef.current.currentTime;
     setQuality(q);
     setActiveSrc(newUrl);
@@ -175,7 +172,10 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
   useEffect(() => {
     const v = videoRef.current;
     if (!v || savedTimeRef.current === 0) return;
-    const onLoaded = () => { v.currentTime = savedTimeRef.current; v.play().catch(() => {}); };
+    const onLoaded = () => {
+      v.currentTime = savedTimeRef.current;
+      v.play().catch(() => {});
+    };
     v.addEventListener("loadedmetadata", onLoaded, { once: true });
     return () => v.removeEventListener("loadedmetadata", onLoaded);
   }, [activeSrc]);
@@ -183,60 +183,134 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === "INPUT") return;
-      if (e.key === " " || e.key === "k") { e.preventDefault(); togglePlay(); }
-      if (e.key === "ArrowRight") { e.preventDefault(); if (videoRef.current) videoRef.current.currentTime += 5; }
-      if (e.key === "ArrowLeft")  { e.preventDefault(); if (videoRef.current) videoRef.current.currentTime -= 5; }
+      if (e.key === " " || e.key === "k") {
+        e.preventDefault();
+        togglePlay();
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        if (videoRef.current) videoRef.current.currentTime += 5;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (videoRef.current) videoRef.current.currentTime -= 5;
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePlay]);
 
-  /* ── Track fullscreen state from both div API and video API ── */
+  /* ── Fullscreen state sync ── */
+  /* ── Fullscreen state sync (browser only — native uses CSS fake fullscreen) ── */
   useEffect(() => {
+    if (IS_NATIVE) return; // handled manually in toggleFullscreen
     const onFsChange = () => {
-      const isFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+      const isFs = !!(
+        document.fullscreenElement || (document as any).webkitFullscreenElement
+      );
       setIsFullscreen(isFs);
-      if (isFs) {
-        screen.orientation?.lock?.("landscape").catch(() => {});
-        document.documentElement.classList.add("fullscreen-video");
-      } else {
-        screen.orientation?.unlock?.();
+      if (!isFs) {
         document.documentElement.classList.remove("fullscreen-video");
+        try {
+          screen.orientation?.unlock?.();
+        } catch {}
       }
     };
-
-    // video element fires these when webkitEnterFullscreen is used
-    const onVideoFs    = () => { setIsFullscreen(true);  document.documentElement.classList.add("fullscreen-video"); screen.orientation?.lock?.("landscape").catch(() => {}); };
-    const onVideoFsEnd = () => { setIsFullscreen(false); document.documentElement.classList.remove("fullscreen-video"); screen.orientation?.unlock?.(); };
-
     document.addEventListener("fullscreenchange", onFsChange);
     document.addEventListener("webkitfullscreenchange", onFsChange);
-    videoRef.current?.addEventListener("webkitbeginfullscreen", onVideoFs);
-    videoRef.current?.addEventListener("webkitendfullscreen", onVideoFsEnd);
-
     return () => {
       document.removeEventListener("fullscreenchange", onFsChange);
       document.removeEventListener("webkitfullscreenchange", onFsChange);
-      videoRef.current?.removeEventListener("webkitbeginfullscreen", onVideoFs);
-      videoRef.current?.removeEventListener("webkitendfullscreen", onVideoFsEnd);
     };
   }, []);
 
-  const handleMouseMove = () => {
-    setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) setShowControls(false);
-    }, 3000);
+  const toggleFullscreen = async () => {
+    if (isFullscreen) {
+      // Exit
+      if (IS_NATIVE) {
+        // CSS fake-fullscreen exit
+        try {
+          const { ScreenOrientation } =
+            await import("@capacitor/screen-orientation");
+          await ScreenOrientation.unlock();
+        } catch {
+          try {
+            await screen.orientation?.unlock?.();
+          } catch {}
+        }
+        document.documentElement.classList.remove("fullscreen-video");
+        setIsFullscreen(false);
+      } else {
+        try {
+          if (document.exitFullscreen) await document.exitFullscreen();
+          else if ((document as any).webkitExitFullscreen)
+            await (document as any).webkitExitFullscreen();
+        } catch {}
+        document.documentElement.classList.remove("fullscreen-video");
+        setIsFullscreen(false);
+      }
+      return;
+    }
+
+    // Enter fullscreen
+    if (IS_NATIVE) {
+      // Android WebView: requestFullscreen on a div causes black screen.
+      // Use CSS fixed positioning instead — fully reliable in Capacitor.
+      try {
+        const { ScreenOrientation } =
+          await import("@capacitor/screen-orientation");
+        await ScreenOrientation.lock({ orientation: "landscape" });
+      } catch {
+        try {
+          await screen.orientation?.lock?.("landscape" as OrientationLockType);
+        } catch {}
+      }
+      document.documentElement.classList.add("fullscreen-video");
+      setIsFullscreen(true);
+    } else {
+      // Desktop / browser — real fullscreen API
+      const el = containerRef.current;
+      if (!el) return;
+      try {
+        if (el.requestFullscreen) await el.requestFullscreen();
+        else if ((el as any).webkitRequestFullscreen)
+          await (el as any).webkitRequestFullscreen();
+        document.documentElement.classList.add("fullscreen-video");
+        setIsFullscreen(true);
+      } catch (err) {
+        console.warn("Fullscreen failed:", err);
+      }
+    }
+  };
+
+  const handleVideoClick = () => {
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      // Mobile: single tap toggles controls visibility
+      if (showControls) {
+        setShowControls(false);
+        if (controlsTimeoutRef.current)
+          clearTimeout(controlsTimeoutRef.current);
+      } else {
+        resetControlsTimer();
+      }
+    } else {
+      togglePlay();
+    }
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
     const now = Date.now();
-    if (now - lastTapTimeRef.current < 300 && videoRef.current && containerRef.current) {
+    if (
+      now - lastTapTimeRef.current < 300 &&
+      videoRef.current &&
+      containerRef.current
+    ) {
+      // Double tap — seek
       const rect = containerRef.current.getBoundingClientRect();
       videoRef.current.currentTime +=
-        e.touches[0].clientX - rect.left > rect.width / 2 ? 5 : -5;
+        e.touches[0].clientX - rect.left > rect.width / 2 ? 10 : -10;
       lastTapTimeRef.current = 0;
+      resetControlsTimer();
     } else {
       lastTapTimeRef.current = now;
     }
@@ -260,24 +334,15 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
     setVolume(v);
     if (videoRef.current) {
       videoRef.current.volume = v;
-      videoRef.current.muted  = v === 0;
+      videoRef.current.muted = v === 0;
       setIsMuted(v === 0);
-    }
-  };
-
-  const toggleFullscreen = () => {
-    if (isFullscreen) {
-      exitFullscreen();
-    } else {
-      if (containerRef.current && videoRef.current) {
-        enterFullscreen(containerRef.current, videoRef.current);
-      }
     }
   };
 
   const formatTime = (t: number) => {
     if (isNaN(t)) return "0:00";
-    const m = Math.floor(t / 60), s = Math.floor(t % 60);
+    const m = Math.floor(t / 60),
+      s = Math.floor(t % 60);
     return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
@@ -290,9 +355,16 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
   return (
     <div
       ref={containerRef}
-      className="w-full bg-black relative group aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => isPlaying && setShowControls(false)}
+      data-player-container
+      className={`bg-black relative ${
+        isFullscreen
+          ? "w-screen h-screen"
+          : "w-full aspect-video rounded-2xl overflow-hidden shadow-xl border border-border-subtle"
+      }`}
+      onMouseMove={resetControlsTimer}
+      onMouseLeave={() => {
+        if (isPlaying) setShowControls(false);
+      }}
     >
       <video
         ref={videoRef}
@@ -300,93 +372,163 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
         className="w-full h-full object-contain"
         onTimeUpdate={() => {
           if (videoRef.current)
-            setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100);
+            setProgress(
+              (videoRef.current.currentTime / videoRef.current.duration) * 100,
+            );
         }}
-        onLoadedMetadata={() => { if (videoRef.current) setDuration(videoRef.current.duration); }}
+        onLoadedMetadata={() => {
+          if (videoRef.current) setDuration(videoRef.current.duration);
+        }}
         onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => setIsBuffering(false)}
+        onPlaying={() => {
+          setIsBuffering(false);
+          setIsPlaying(true);
+        }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
-        onClick={() =>
-          window.matchMedia("(pointer: coarse)").matches
-            ? setShowControls((v) => !v)
-            : togglePlay()
-        }
+        onClick={handleVideoClick}
         onTouchStart={handleTouchStart}
-        onDoubleClick={(e) => {
-          if (!videoRef.current || !containerRef.current) return;
-          const rect = containerRef.current.getBoundingClientRect();
-          videoRef.current.currentTime +=
-            e.clientX - rect.left > rect.width / 2 ? 5 : -5;
-        }}
         autoPlay
         playsInline
       />
 
       {isBuffering && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10">
-          <img src={LOADING_GIF_PATH} alt="Buffering" className="w-16 h-16 object-contain" />
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10 pointer-events-none">
+          <img
+            src={LOADING_GIF_PATH}
+            alt="Buffering"
+            className="w-16 h-16 object-contain"
+          />
         </div>
       )}
 
-      {/* Controls */}
+      {/* Controls — always rendered, visibility toggled via opacity */}
       <div
         className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-4 pt-16 pb-4 transition-opacity duration-300 z-20 ${
           showControls ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
+        onTouchStart={(e) =>
+          e.stopPropagation()
+        } /* prevent touch falling through to video */
       >
+        {/* Progress */}
         <div className="mb-4">
           <input
-            type="range" min="0" max="100" value={progress}
+            type="range"
+            min="0"
+            max="100"
+            value={progress}
             onChange={handleSeek}
             onClick={(e) => e.stopPropagation()}
-            className="w-full h-1 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
-            style={{ background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)` }}
+            className="w-full h-1 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full"
+            style={{
+              background: `linear-gradient(to right, var(--theme-primary) ${progress}%, rgba(255,255,255,0.3) ${progress}%)`,
+            }}
           />
         </div>
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime -= 5; }} className="text-white hover:text-primary transition-colors">
+            <button
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (videoRef.current) videoRef.current.currentTime -= 10;
+                resetControlsTimer();
+              }}
+              onClick={() => {
+                if (videoRef.current) videoRef.current.currentTime -= 10;
+              }}
+              className="text-white hover:text-primary transition-colors"
+            >
               <Rewind className="w-5 h-5" />
             </button>
-            <button onClick={togglePlay} className="text-white hover:text-primary transition-colors">
-              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+            <button
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                togglePlay();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                togglePlay();
+              }}
+              className="text-white hover:text-primary transition-colors"
+            >
+              {isPlaying ? (
+                <Pause className="w-6 h-6" />
+              ) : (
+                <Play className="w-6 h-6" />
+              )}
             </button>
-            <button onClick={() => { if (videoRef.current) videoRef.current.currentTime += 5; }} className="text-white hover:text-primary transition-colors">
+            <button
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (videoRef.current) videoRef.current.currentTime += 10;
+                resetControlsTimer();
+              }}
+              onClick={() => {
+                if (videoRef.current) videoRef.current.currentTime += 10;
+              }}
+              className="text-white hover:text-primary transition-colors"
+            >
               <FastForward className="w-5 h-5" />
             </button>
-
-            <div className="flex items-center gap-2 group/vol">
-              <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
-                {isMuted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+            <div className="hidden md:flex items-center gap-2 group/vol">
+              <button
+                onClick={toggleMute}
+                className="text-white hover:text-primary transition-colors"
+              >
+                {isMuted || volume === 0 ? (
+                  <VolumeX className="w-5 h-5" />
+                ) : (
+                  <Volume2 className="w-5 h-5" />
+                )}
               </button>
               <input
-                type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={isMuted ? 0 : volume}
                 onChange={handleVolumeChange}
                 onClick={(e) => e.stopPropagation()}
                 className="w-20 h-1 rounded-full appearance-none cursor-pointer hidden group-hover/vol:block [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                style={{ background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)` }}
+                style={{
+                  background: `linear-gradient(to right, white ${(isMuted ? 0 : volume) * 100}%, rgba(255,255,255,0.3) ${(isMuted ? 0 : volume) * 100}%)`,
+                }}
               />
             </div>
-
             <span className="text-white/90 text-sm font-medium">
-              {formatTime(videoRef.current?.currentTime || 0)} / {formatTime(duration)}
+              {formatTime(videoRef.current?.currentTime || 0)} /{" "}
+              {formatTime(duration)}
             </span>
           </div>
 
           <div className="flex items-center gap-4 relative">
             {hasQualities && (
               <div className="relative">
-                <button onClick={() => setShowSettings((s) => !s)} className="text-white hover:text-primary transition-colors flex items-center gap-1">
+                <button
+                  onClick={() => setShowSettings((s) => !s)}
+                  className="text-white hover:text-primary transition-colors flex items-center gap-1"
+                >
                   <Settings className="w-5 h-5" />
-                  <span className="text-xs font-bold">{qualityLabel(quality)}</span>
+                  <span className="text-xs font-bold">
+                    {qualityLabel(quality)}
+                  </span>
                 </button>
                 {showSettings && (
                   <div className="absolute bottom-full right-0 mb-4 bg-surface/95 backdrop-blur-md border border-border-subtle rounded-xl py-2 min-w-[120px] shadow-2xl z-50">
-                    <div className="px-3 py-1 text-xs font-semibold text-content-muted uppercase tracking-wider border-b border-border-subtle mb-1">Quality</div>
+                    <div className="px-3 py-1 text-xs font-semibold text-content-muted uppercase tracking-wider border-b border-border-subtle mb-1">
+                      Quality
+                    </div>
                     {availableQualities.map((q) => (
-                      <button key={q} onClick={() => switchQuality(q)} className={`w-full text-left px-4 py-2 text-sm hover:bg-white/10 transition-colors ${quality === q ? "text-primary font-bold" : "text-content"}`}>
+                      <button
+                        key={q}
+                        onClick={() => switchQuality(q)}
+                        className={`w-full text-left px-4 py-2 text-sm hover:bg-white/10 transition-colors ${quality === q ? "text-primary font-bold" : "text-content"}`}
+                      >
                         {qualityLabel(q)}
                       </button>
                     ))}
@@ -394,8 +536,23 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
                 )}
               </div>
             )}
-            <button onClick={toggleFullscreen} className="text-white hover:text-primary transition-colors">
-              {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+            <button
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleFullscreen();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFullscreen();
+              }}
+              className="text-white hover:text-primary transition-colors"
+            >
+              {isFullscreen ? (
+                <Minimize className="w-5 h-5" />
+              ) : (
+                <Maximize className="w-5 h-5" />
+              )}
             </button>
           </div>
         </div>
@@ -405,9 +562,7 @@ function NativePlayer({ src, title, qualityMap = {} }: { src: string; title: str
 }
 
 /* ─────────────────────────────────────────────────────────────
-   EPORNER IFRAME PLAYER
-   sandbox blocks overlay ad/link clicks from navigating away.
-   No extra fullscreen button — the iframe's own fullscreen works.
+   EPORNER IFRAME
 ───────────────────────────────────────────────────────────── */
 function EpornerPlayer({ src, title }: { src: string; title: string }) {
   return (
@@ -415,11 +570,6 @@ function EpornerPlayer({ src, title }: { src: string; title: string }) {
       <iframe
         src={src}
         className="w-full h-full border-0"
-        /*
-         * allow-scripts + allow-same-origin = video player works
-         * NO allow-popups, NO allow-top-navigation = overlay links do nothing
-         * allow-fullscreen is in the `allow` attr below (separate from sandbox)
-         */
         sandbox="allow-scripts allow-same-origin"
         allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen"
         allowFullScreen
@@ -430,15 +580,10 @@ function EpornerPlayer({ src, title }: { src: string; title: string }) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   MAIN VideoPlayer — routes by type
-───────────────────────────────────────────────────────────── */
+   MAIN
+───────────────────────────────────────────────────────── */
 export default function VideoPlayer({ src, type, title, videoId }: VideoPlayerProps) {
-  if (type === "hqporner") {
-    return <HQPornerPlayer src={src} title={title} videoId={videoId} />;
-  }
-  if (type === "mp4") {
-    return <NativePlayer src={src} title={title} />;
-  }
-  // eporner and all other iframe-based sources
+  if (type === "hqporner") return <HQPornerPlayer src={src} title={title} videoId={videoId} />;
+  if (type === "mp4") return <NativePlayer src={src} title={title} />;
   return <EpornerPlayer src={src} title={title} />;
 }

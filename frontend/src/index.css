@@ -44,6 +44,21 @@ html.fullscreen-video :fullscreen {
   width: 100vw;
   height: 100vh;
 }
+/* Android Capacitor fake fullscreen */
+html.fullscreen-video,
+html.fullscreen-video body {
+  overflow: hidden;
+}
+
+html.fullscreen-video [data-player-container] {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 9999 !important;
+  border-radius: 0 !important;
+  border: none !important;
+}
 .dark {
   --theme-background: #0e0e0e;
   --theme-surface: #1c1c1c;
