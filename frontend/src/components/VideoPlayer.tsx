@@ -7,6 +7,12 @@ import {
 import { LOADING_GIF_PATH } from '../constants';
 import axios from 'axios';
 import { saveCdnUrl, getCdnUrl } from '../utils/videoCache';
+import { registerPlugin } from "@capacitor/core";
+
+const SystemUI = registerPlugin<{
+  hide: () => Promise<void>;
+  show: () => Promise<void>;
+}>("SystemUI");
 
 interface VideoPlayerProps {
   src: string;
@@ -199,6 +205,13 @@ function NativePlayer({
       document.removeEventListener("webkitfullscreenchange", onFsChange);
     };
   }, []);
+  useEffect(() => {
+    return () => {
+      if (IS_NATIVE && isFullscreen) {
+        SystemUI.show().catch(() => {});
+      }
+    };
+  }, [isFullscreen]);
 
   /* ── Reattach video surface after CSS layout change (Android WebView fix) ── */
   const reattachVideoSurface = useCallback(() => {
@@ -219,21 +232,29 @@ function NativePlayer({
 
   const toggleFullscreen = async () => {
     if (isFullscreen) {
-      // ── Exit fullscreen ──
+      // Exit fullscreen — restore status bar + nav
       if (IS_NATIVE) {
         try {
-          const { ScreenOrientation } = await import("@capacitor/screen-orientation");
+          const { ScreenOrientation } =
+            await import("@capacitor/screen-orientation");
           await ScreenOrientation.unlock();
         } catch {
-          try { await (screen.orientation as any)?.unlock?.(); } catch {}
+          try {
+            await (screen.orientation as any)?.unlock?.();
+          } catch {}
         }
+        // Restore system bars
+        try {
+          await SystemUI.show();
+        } catch {}
         document.documentElement.classList.remove("fullscreen-video");
         setIsFullscreen(false);
-        reattachVideoSurface(); // reattach after returning to portrait layout
+        reattachVideoSurface();
       } else {
         try {
           if (document.exitFullscreen) await document.exitFullscreen();
-          else if ((document as any).webkitExitFullscreen) await (document as any).webkitExitFullscreen();
+          else if ((document as any).webkitExitFullscreen)
+            await (document as any).webkitExitFullscreen();
         } catch {}
         document.documentElement.classList.remove("fullscreen-video");
         setIsFullscreen(false);
@@ -241,26 +262,31 @@ function NativePlayer({
       return;
     }
 
-    // ── Enter fullscreen ──
+    // Enter fullscreen — hide status bar + nav
     if (IS_NATIVE) {
-      // requestFullscreen() on a div causes black screen in Capacitor WebView.
-      // Status bar + nav bars are already hidden app-wide via MainActivity.java.
-      // Use CSS fixed positioning + orientation lock instead.
       try {
-        const { ScreenOrientation } = await import("@capacitor/screen-orientation");
+        const { ScreenOrientation } =
+          await import("@capacitor/screen-orientation");
         await ScreenOrientation.lock({ orientation: "landscape" });
       } catch {
-        try { await (screen.orientation as any)?.lock?.("landscape"); } catch {}
+        try {
+          await (screen.orientation as any)?.lock?.("landscape");
+        } catch {}
       }
+      // Hide system bars
+      try {
+        await SystemUI.hide();
+      } catch {}
       document.documentElement.classList.add("fullscreen-video");
       setIsFullscreen(true);
-      reattachVideoSurface(); // reattach after CSS transitions to new landscape surface
+      reattachVideoSurface();
     } else {
       const el = containerRef.current;
       if (!el) return;
       try {
         if (el.requestFullscreen) await el.requestFullscreen();
-        else if ((el as any).webkitRequestFullscreen) await (el as any).webkitRequestFullscreen();
+        else if ((el as any).webkitRequestFullscreen)
+          await (el as any).webkitRequestFullscreen();
         document.documentElement.classList.add("fullscreen-video");
         setIsFullscreen(true);
       } catch (err) {

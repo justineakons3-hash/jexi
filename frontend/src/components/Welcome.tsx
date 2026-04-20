@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
-import { motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import welcomeVideo from "../assets/welcome.mp4";
-import welcome2Video from "../assets/welcome2.mp4";
+import welcome2Image from "../assets/welcome2.jpg"; // ← rename if filename differs
 
 const isMobile = window.innerWidth < 768;
 const UMA_EMAIL = "uma@gmail.com";
@@ -12,37 +12,60 @@ interface WelcomeProps {
 }
 
 export default function Welcome({ onComplete, userEmail }: WelcomeProps) {
+  const isUma = userEmail?.toLowerCase().trim() === UMA_EMAIL;
   const videoRef = useRef<HTMLVideoElement>(null);
-  const src =
-    userEmail?.toLowerCase().trim() === UMA_EMAIL
-      ? welcomeVideo
-      : welcome2Video;
 
+  // For video (uma): don't show animation until video is ready to paint
+  const [videoReady, setVideoReady] = useState(false);
+
+  // For image (everyone else): image is instant, show immediately
+  const [imageReady, setImageReady] = useState(false);
+
+  // Global timeout — always bail out after 4s regardless
   useEffect(() => {
     const timer = setTimeout(() => onComplete(), 4000);
     return () => clearTimeout(timer);
   }, [onComplete]);
 
+  // Video path — only for uma
   useEffect(() => {
+    if (!isUma) return;
     const video = videoRef.current;
     if (!video) return;
 
-    video.muted = true;
+    video.muted  = true;
     video.volume = 0;
     video.load();
 
-    const tryPlay = () => {
+    const onReady = () => {
+      setVideoReady(true);
       video.play().catch(() => onComplete());
     };
 
-    if (video.readyState >= 3) {
-      tryPlay();
+    // readyState 4 = HAVE_ENOUGH_DATA, safe to paint immediately
+    if (video.readyState >= 4) {
+      onReady();
     } else {
-      video.addEventListener("canplay", tryPlay, { once: true });
+      video.addEventListener("canplaythrough", onReady, { once: true });
     }
 
-    return () => video.removeEventListener("canplay", tryPlay);
-  }, [onComplete, src]); // re-run if src changes
+    return () => video.removeEventListener("canplaythrough", onReady);
+  }, [isUma, onComplete]);
+
+  // Image path — preload so it's decoded before animating
+  useEffect(() => {
+    if (isUma) return;
+    const img = new Image();
+    img.src = welcome2Image;
+    if (img.complete) {
+      setImageReady(true);
+    } else {
+      img.onload = () => setImageReady(true);
+      img.onerror = () => setImageReady(true); // show anyway on error
+    }
+  }, [isUma]);
+
+  const ready = isUma ? videoReady : imageReady;
 
   return (
     <motion.div
@@ -50,34 +73,49 @@ export default function Welcome({ onComplete, userEmail }: WelcomeProps) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.8, ease: "easeInOut" }}
+      transition={{ duration: 0.5, ease: "easeInOut" }}
     >
-      <motion.div
-        className="absolute inset-0 flex items-center justify-center origin-center"
-        animate={{ scale: [0.8, 1, 1, 15], opacity: [0, 1, 1, 0] }}
-        transition={{ times: [0, 0.2, 0.6, 1], duration: 4, ease: "easeInOut" }}
-        style={{ transformOrigin: isMobile ? "50% 53%" : "53% 60%" }}
-      >
-        <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
-          <video
-            ref={videoRef}
-            src={src}
-            muted
-            playsInline
-            preload="auto"
-            loop
-            className="w-full h-full object-cover"
-          />
-        </div>
-      </motion.div>
-
-      <motion.div
-        className="absolute inset-0 flex items-center justify-center pointer-events-none"
-        animate={{ opacity: [0, 1, 1, 0], scale: [0.9, 1, 1, 1.2] }}
-        transition={{ times: [0, 0.2, 0.6, 1], duration: 4, ease: "easeInOut" }}
-      >
-        <h1 className="text-6xl md:text-8xl font-bold text-white tracking-widest drop-shadow-2xl" />
-      </motion.div>
+      <AnimatePresence>
+        {ready && (
+          <motion.div
+            key="welcome-content"
+            className="absolute inset-0 flex items-center justify-center"
+            animate={{ scale: [0.8, 1, 1, 15], opacity: [0, 1, 1, 0] }}
+            transition={{
+              times: [0, 0.2, 0.6, 1],
+              duration: 4,
+              ease: "easeInOut",
+            }}
+            style={{
+              // Zoom origin: center for image, original offsets for video
+              transformOrigin: isUma
+                ? isMobile ? "50% 53%" : "53% 60%"
+                : "50% 50%", // ← adjust this for welcome2 image zoom position
+            }}
+          >
+            <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
+              {isUma ? (
+                <video
+                  ref={videoRef}
+                  src={welcomeVideo}
+                  muted
+                  playsInline
+                  preload="auto"
+                  loop
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <img
+                  src={welcome2Image}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  draggable={false}
+                />
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
