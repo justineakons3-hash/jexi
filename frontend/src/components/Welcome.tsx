@@ -90,7 +90,7 @@ export default function Welcome({ onComplete, userEmail }: WelcomeProps) {
               // Zoom origin: center for image, original offsets for video
               transformOrigin: isUma
                 ? isMobile ? "50% 53%" : "53% 60%"
-                : "50% 50%", // ← adjust this for welcome2 image zoom position
+                : "53.2% 91.6%", // ← adjust this for welcome2 image zoom position
             }}
           >
             <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
