@@ -1,0 +1,133 @@
+import { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import welcomeVideo from "../assets/welcome.mp4";
+import welcome2Image from "../assets/welcome2.jpg"; // ← rename if filename differs
+
+const isMobile = window.innerWidth < 768;
+<img
+  src={welcome2Image}
+  alt=""
+  className="w-full h-full object-cover"
+  draggable={false}
+  onClick={(e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (((e.clientX - rect.left) / rect.width) * 100).toFixed(1);
+    const y = (((e.clientY - rect.top) / rect.height) * 100).toFixed(1);
+    alert(`x: ${x}% y: ${y}%`);
+  }}
+/>;
+const UMA_EMAIL = "uma@gmail.com";
+
+interface WelcomeProps {
+  onComplete: () => void;
+  userEmail?: string;
+}
+
+export default function Welcome({ onComplete, userEmail }: WelcomeProps) {
+  const isUma = userEmail?.toLowerCase().trim() === UMA_EMAIL;
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // For video (uma): don't show animation until video is ready to paint
+  const [videoReady, setVideoReady] = useState(false);
+
+  // For image (everyone else): image is instant, show immediately
+  const [imageReady, setImageReady] = useState(false);
+
+  // Global timeout — always bail out after 4s regardless
+  useEffect(() => {
+    const timer = setTimeout(() => onComplete(), 4000);
+    return () => clearTimeout(timer);
+  }, [onComplete]);
+
+  // Video path — only for uma
+  useEffect(() => {
+    if (!isUma) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.muted  = true;
+    video.volume = 0;
+    video.load();
+
+    const onReady = () => {
+      setVideoReady(true);
+      video.play().catch(() => onComplete());
+    };
+
+    // readyState 4 = HAVE_ENOUGH_DATA, safe to paint immediately
+    if (video.readyState >= 4) {
+      onReady();
+    } else {
+      video.addEventListener("canplaythrough", onReady, { once: true });
+    }
+
+    return () => video.removeEventListener("canplaythrough", onReady);
+  }, [isUma, onComplete]);
+
+  // Image path — preload so it's decoded before animating
+  useEffect(() => {
+    if (isUma) return;
+    const img = new Image();
+    img.src = welcome2Image;
+    if (img.complete) {
+      setImageReady(true);
+    } else {
+      img.onload = () => setImageReady(true);
+      img.onerror = () => setImageReady(true); // show anyway on error
+    }
+  }, [isUma]);
+
+  const ready = isUma ? videoReady : imageReady;
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black overflow-hidden"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.5, ease: "easeInOut" }}
+    >
+      <AnimatePresence>
+        {ready && (
+          <motion.div
+            key="welcome-content"
+            className="absolute inset-0 flex items-center justify-center"
+            animate={{ scale: [0.8, 1, 1, 15], opacity: [0, 1, 1, 0] }}
+            transition={{
+              times: [0, 0.2, 0.6, 1],
+              duration: 4,
+              ease: "easeInOut",
+            }}
+            style={{
+              // Zoom origin: center for image, original offsets for video
+              transformOrigin: isUma
+                ? isMobile ? "50% 53%" : "53% 60%"
+                : "53.2% 91.6%", // ← adjust this for welcome2 image zoom position
+            }}
+          >
+            <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
+              {isUma ? (
+                <video
+                  ref={videoRef}
+                  src={welcomeVideo}
+                  muted
+                  playsInline
+                  preload="auto"
+                  loop
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <img
+                  src={welcome2Image}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  draggable={false}
+                />
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}

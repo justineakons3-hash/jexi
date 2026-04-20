@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import welcomeVideo from "../assets/welcome.mp4";
-import welcome2Image from "../assets/welcome2.jpg"; // ← rename if filename differs
+import welcome2Image from "../assets/welcome2.jpg";
 
 const isMobile = window.innerWidth < 768;
 const UMA_EMAIL = "uma@gmail.com";
@@ -13,59 +13,42 @@ interface WelcomeProps {
 
 export default function Welcome({ onComplete, userEmail }: WelcomeProps) {
   const isUma = userEmail?.toLowerCase().trim() === UMA_EMAIL;
-  const videoRef = useRef<HTMLVideoElement>(null);
 
-  // For video (uma): don't show animation until video is ready to paint
-  const [videoReady, setVideoReady] = useState(false);
-
-  // For image (everyone else): image is instant, show immediately
-  const [imageReady, setImageReady] = useState(false);
-
-  // Global timeout — always bail out after 4s regardless
   useEffect(() => {
-    const timer = setTimeout(() => onComplete(), 4000);
+    const timer = setTimeout(() => onComplete(), 5000);
     return () => clearTimeout(timer);
   }, [onComplete]);
 
-  // Video path — only for uma
-  useEffect(() => {
-    if (!isUma) return;
-    const video = videoRef.current;
-    if (!video) return;
-
-    video.muted  = true;
-    video.volume = 0;
-    video.load();
-
-    const onReady = () => {
-      setVideoReady(true);
-      video.play().catch(() => onComplete());
-    };
-
-    // readyState 4 = HAVE_ENOUGH_DATA, safe to paint immediately
-    if (video.readyState >= 4) {
-      onReady();
-    } else {
-      video.addEventListener("canplaythrough", onReady, { once: true });
-    }
-
-    return () => video.removeEventListener("canplaythrough", onReady);
-  }, [isUma, onComplete]);
-
-  // Image path — preload so it's decoded before animating
-  useEffect(() => {
-    if (isUma) return;
-    const img = new Image();
-    img.src = welcome2Image;
-    if (img.complete) {
-      setImageReady(true);
-    } else {
-      img.onload = () => setImageReady(true);
-      img.onerror = () => setImageReady(true); // show anyway on error
-    }
-  }, [isUma]);
-
-  const ready = isUma ? videoReady : imageReady;
+  /*
+   * transformOrigin for the zoom animation.
+   *
+   * The animated div is `absolute inset-0` (full screen).
+   * transformOrigin % is relative to THAT element = relative to screen.
+   *
+   * For the image: the image box is centered in the screen.
+   * On mobile the box is 95vw wide with 16:9 ratio.
+   * The tap coords (51.9%, 88.8%) were measured relative to the IMAGE box,
+   * so we need to convert them to screen coordinates.
+   *
+   * Image box on mobile:
+   *   width  = 95vw  → left edge at 2.5vw, right edge at 97.5vw
+   *   height = 95vw * 9/16
+   *   Box is vertically centered → top edge at 50vh - height/2
+   *
+   * Screen X = 2.5% + 51.9% * 95%  ≈ 51.8% (nearly same, horizontal centering minor)
+   * Screen Y = (50vh - h/2) + 88.8% * h  → depends on aspect ratio vs screen
+   *
+   * Simplest fix: use fixed pixel coords via CSS calc, or just use vw/vh units
+   * directly on the transform origin which IS screen-relative.
+   *
+   * After measurement: image tap was 51.9% 88.8% of image box.
+   * Image box height on typical mobile (844px screen) ≈ 95vw*9/16 ≈ 190px
+   * Image top ≈ (844-190)/2 = 327px → 327/844 = 38.7% from top
+   * Image bottom ≈ 327+190 = 517px → 517/844 = 61.3%
+   * Y in screen = 38.7% + 88.8% * (61.3%-38.7%) = 38.7% + 88.8%*22.6% ≈ 58.8%
+   *
+   * So screen-relative origin ≈ "51.9% 58.8%" for mobile image
+   */
 
   return (
     <motion.div
@@ -75,47 +58,47 @@ export default function Welcome({ onComplete, userEmail }: WelcomeProps) {
       exit={{ opacity: 0 }}
       transition={{ duration: 0.5, ease: "easeInOut" }}
     >
-      <AnimatePresence>
-        {ready && (
-          <motion.div
-            key="welcome-content"
-            className="absolute inset-0 flex items-center justify-center"
-            animate={{ scale: [0.8, 1, 1, 15], opacity: [0, 1, 1, 0] }}
-            transition={{
-              times: [0, 0.2, 0.6, 1],
-              duration: 4,
-              ease: "easeInOut",
-            }}
-            style={{
-              // Zoom origin: center for image, original offsets for video
-              transformOrigin: isUma
-                ? isMobile ? "50% 53%" : "53% 60%"
-                : "53.2% 91.6%", // ← adjust this for welcome2 image zoom position
-            }}
-          >
-            <div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden shadow-2xl shadow-primary/20">
-              {isUma ? (
-                <video
-                  ref={videoRef}
-                  src={welcomeVideo}
-                  muted
-                  playsInline
-                  preload="auto"
-                  loop
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <img
-                  src={welcome2Image}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  draggable={false}
-                />
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <motion.div
+        className="absolute inset-0 flex items-center justify-center"
+        animate={{ scale: [0.85, 1, 1, 15], opacity: [0, 1, 1, 0] }}
+        transition={{
+          times: [0, 0.15, 0.6, 1],
+          duration: 4,
+          ease: "easeInOut",
+        }}
+        style={{
+          transformOrigin: isUma
+            ? isMobile ? "50% 53%" : "53% 60%"
+            : isMobile ? "51.9% 58.8%" : "53.2% 91.6%",
+        }}
+      >
+        <div
+          style={
+            isMobile
+              ? { width: "95vw", aspectRatio: "16/9" }
+              : { width: "100%", maxWidth: "64rem", aspectRatio: "16/9" }
+          }
+          className="rounded-2xl overflow-hidden shadow-2xl shadow-primary/20"
+        >
+          {isUma ? (
+            <video
+              src={welcomeVideo}
+              muted
+              playsInline
+              autoPlay
+              loop
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <img
+              src={welcome2Image}
+              alt=""
+              className="w-full h-full object-cover"
+              draggable={false}
+            />
+          )}
+        </div>
+      </motion.div>
     </motion.div>
   );
 }
